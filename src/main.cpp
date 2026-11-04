@@ -17,6 +17,7 @@
 #include "hw/display.h"
 #include "hw/haptic.h"
 #include "hw/input.h"
+#include "hw/board.h"
 #include "hw/led_ring.h"
 #include "ui/ui.h"
 
@@ -170,6 +171,10 @@ static void serial_commands() {
     } else if (c == 'l') {
       Serial.println("[dbg] LED calibration: 0=red 1=green 2=blue 3=white");
       led_ring_calibrate();
+    } else if (c == 'u') {
+      // Is the 13th LED in the chain the one by the USB port?
+      Serial.println("[dbg] LED 12 only, white, 15 s");
+      led_ring_test_one(LED_RING_COUNT - 1);
     } else if (c == 'r') {
       // Row 180 crosses the rim's track on the left (x ~2..18).
       display_debug_row(180, 0, 22);

@@ -9,3 +9,4 @@ void led_ring_snr(float snr_db);
 void led_ring_off();
 extern bool g_led_saver_off;  // screen saver "off": keep the ring dark
 void led_ring_calibrate();  // debug: LEDs 0..3 = red, green, blue, white for 15 s
+void led_ring_test_one(int idx);  // debug: just LED idx, white, for 15 s

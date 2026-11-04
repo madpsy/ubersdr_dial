@@ -40,6 +40,16 @@ void led_ring_calibrate() {
   s_ring.show();
 }
 
+// Debug: only one LED lit (white, full brightness) for 15 s, to find where it is.
+void led_ring_test_one(int idx) {
+  s_calib_until = millis() + 15000;
+  s_ring.clear();
+  s_ring.setBrightness(255);
+  s_ring.setPixelColor(idx, 255, 255, 255);
+  s_ring.show();
+  s_ring.setBrightness(kBright);  // applies from the next show()
+}
+
 void led_ring_off() {
   if ((int32_t)(s_calib_until - millis()) > 0) return;
   if (!s_on) return;
