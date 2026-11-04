@@ -6,6 +6,8 @@
 #ifndef DIAL_VERSION
 #define DIAL_VERSION "dev"
 #endif
+#include "device_menu.h"
+#include "menu.h"
 #include "theme.h"
 #include "ui.h"
 
@@ -15,6 +17,7 @@ static constexpr int kChoices = 3;  // 0 receiver, 1 controller BLE, 2 controlle
 static lv_obj_t *s_btn[kChoices];
 static int s_sel = 0;
 static void (*s_on_pick)(int) = nullptr;
+static lv_obj_t *s_scr, *s_overlay;  // the settings menu while open
 
 static uint32_t choice_col(int i) { return i == 0 ? COL_ACCENT : COL_ACCENT2; }
 
@@ -62,6 +65,8 @@ void modesel_create(void (*on_pick)(int)) {
   s_on_pick = on_pick;
   s_sel = g_settings.start_mode < kChoices ? g_settings.start_mode : 0;
   lv_obj_t *scr = theme_screen();
+  s_scr = scr;
+  s_overlay = nullptr;
   lv_obj_t *t = theme_label(scr, &lv_font_montserrat_20, COL_TEXT, "UberSDR Dial");
   lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 56);
   lv_obj_t *q = theme_label(scr, &lv_font_montserrat_14, COL_DIM, "How shall we start?");
@@ -70,15 +75,25 @@ void modesel_create(void (*on_pick)(int)) {
   s_btn[1] = choice(scr, 1, LV_SYMBOL_BLUETOOTH, "CONTROLLER", "Bluetooth", 0);
   s_btn[2] = choice(scr, 2, LV_SYMBOL_USB, "CONTROLLER", "USB", 110);
   lv_obj_t *h = theme_label(scr, &lv_font_montserrat_12, COL_DIM, "Turn to choose  " LV_SYMBOL_BULLET "  tap to start");
-  lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -66);
+  lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -80);
   lv_obj_t *v = theme_label(scr, &lv_font_montserrat_12, COL_DIM, "v" DIAL_VERSION);
-  lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, -40);
+  lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, -60);
+  // Dial-wide settings (brightness, haptics, screen saver) before choosing.
+  lv_obj_t *gear = theme_pill(scr, LV_SYMBOL_SETTINGS, COL_DIM, 52, 40);
+  lv_obj_align(gear, LV_ALIGN_BOTTOM_MID, 0, -12);
+  lv_obj_add_event_cb(
+      gear, [](lv_event_t *) { menu_open(s_scr, "S E T T I N G S", COL_TEXT, kDeviceMenu, kNumDeviceMenu, &s_overlay); },
+      LV_EVENT_CLICKED, nullptr);
   highlight();
   ui_load(scr);
 }
 
 void modesel_tick(int knob) {
   if (!knob) return;
+  if (s_overlay) {  // settings open: the knob scrolls it
+    menu_knob(knob);
+    return;
+  }
   int s = s_sel + (knob > 0 ? 1 : -1);
   if (s < 0 || s >= kChoices) return;
   s_sel = s;

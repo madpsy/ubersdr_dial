@@ -22,6 +22,7 @@
 #include "../hw/input.h"
 #include "../hw/led_ring.h"
 #include "battery_icon.h"
+#include "device_menu.h"
 #include "menu.h"
 #include "padlock.h"
 #include "rim.h"
@@ -630,15 +631,34 @@ static void close_overlay() {
   s_overlay = nullptr;
 }
 
+// "Are you sure?" before restarting (back to the start-up choice of
+// Receiver / Bluetooth / USB, which is only asked at boot).
+static void confirm_restart() {
+  menu_close();  // if it came from the menu (forgets the menu's list too)
+  close_overlay();
+  s_overlay = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(s_overlay);
+  lv_obj_set_size(s_overlay, 360, 360);
+  lv_obj_center(s_overlay);
+  lv_obj_set_style_bg_color(s_overlay, C(COL_BG), 0);
+  lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *t = theme_label(s_overlay, &lv_font_montserrat_20, COL_TEXT, "Restart the dial?");
+  lv_obj_align(t, LV_ALIGN_CENTER, 0, -52);
+  lv_obj_t *sub = theme_label(s_overlay, &lv_font_montserrat_14, COL_DIM, "Back to choosing Receiver,\nBluetooth or USB");
+  lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(sub, LV_ALIGN_CENTER, 0, -14);
+  lv_obj_t *no = theme_pill(s_overlay, "Cancel", COL_DIM, 110, 44);
+  lv_obj_align(no, LV_ALIGN_CENTER, -62, 44);
+  lv_obj_add_event_cb(no, [](lv_event_t *) { close_overlay(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *yes = theme_pill(s_overlay, LV_SYMBOL_REFRESH " Restart", COL_WARN, 110, 44);
+  lv_obj_align(yes, LV_ALIGN_CENTER, 62, 44);
+  lv_obj_add_event_cb(yes, [](lv_event_t *) { ESP.restart(); }, LV_EVENT_CLICKED, nullptr);
+}
+
 static void send_wf_rate();
-static const MenuChoice kBrightChoices[] = {{"20%", 20}, {"40%", 40}, {"60%", 60}, {"80%", 80}, {"100%", 100}};
 static const MenuChoice kOnOff[] = {{"On", 1}, {"Off", 0}};
-static const MenuChoice kSaverChoices[] = {
-    {"Dim", SAVER_DIM},         {"Screen off", SAVER_OFF}, {"Dim, then\noff", SAVER_DIM_OFF},
-    {"Spectrum off", SAVER_SPECTRUM}, {"Never", SAVER_NEVER}};
-static const MenuChoice kSaverTimes[] = {{"30 s", 30}, {"1 min", 60}, {"2 min", 120}, {"5 min", 300}, {"10 min", 600}};
-static const MenuChoice kSaverOffTimes[] = {{"Auto\n3x dim", 0}, {"5 min", 300},   {"10 min", 600},
-                                            {"20 min", 1200},     {"30 min", 1800}, {"1 hour", 3600}};
 static const MenuChoice kWfRate[] = {{"Battery\n5/s", 0}, {"Smooth\n10/s", 1}};
 
 static const MenuChoice kStepChoices[] = {{"Auto", 0},      {"10 Hz", 10},   {"100 Hz", 100}, {"500 Hz", 500},
@@ -684,45 +704,22 @@ static const MenuItem kCtrlMenu[] = {
        send_wf_rate();
      },
      kWfRate, 2, [] { return g_settings.ctrl_waterfall; }},
-    {LV_SYMBOL_EYE_OPEN, "Brightness", [] { return (int)g_settings.brightness; },
-     [](int v) {
-       g_settings.brightness = v;
-       display_set_brightness(v);
-       settings_save();
-     },
-     kBrightChoices, 5},
-    {LV_SYMBOL_BELL, "Haptics", [] { return (int)g_settings.haptics; },
-     [](int v) {
-       g_settings.haptics = v;
-       haptic_enable(v);
-       settings_save();
-     },
-     kOnOff, 2, [] { return haptic_present(); }},
-    {LV_SYMBOL_EYE_CLOSE, "Screen saver", [] { return (int)g_settings.saver_mode; },
-     [](int v) {
-       g_settings.saver_mode = v;
-       settings_save();
-     },
-     kSaverChoices, 5},
-    {LV_SYMBOL_LOOP, "Saver after", [] { return (int)g_settings.saver_secs; },
-     [](int v) {
-       g_settings.saver_secs = v;
-       settings_save();
-     },
-     kSaverTimes, 5, [] { return g_settings.saver_mode != SAVER_NEVER; }},
-    {LV_SYMBOL_POWER, "Screen off after", [] { return (int)g_settings.saver_off_secs; },
-     [](int v) {
-       g_settings.saver_off_secs = v;
-       settings_save();
-     },
-     kSaverOffTimes, 6, [] { return g_settings.saver_mode == SAVER_DIM_OFF; }},
-    {LV_SYMBOL_REFRESH, "Restart (choose mode)", nullptr, [](int) { ESP.restart(); }, nullptr, 0},
+    {LV_SYMBOL_REFRESH, "Restart (choose mode)", nullptr, [](int) { confirm_restart(); }, nullptr, 0},
 };
 
 static void open_menu() {
+  // This screen's own items, then the dial-wide ones, then Restart last.
+  static constexpr int kNumCtrl = sizeof(kCtrlMenu) / sizeof(kCtrlMenu[0]);
+  static MenuItem items[kNumCtrl + 8];
+  static int n = 0;
+  if (!n) {
+    for (int i = 0; i < kNumCtrl - 1; i++) items[n++] = kCtrlMenu[i];
+    for (int i = 0; i < kNumDeviceMenu && n < (int)(sizeof(items) / sizeof(items[0])) - 1; i++)
+      items[n++] = kDeviceMenu[i];
+    items[n++] = kCtrlMenu[kNumCtrl - 1];
+  }
   menu_open(s_scr, s_link->local ? "R E C E I V E R" : "C O N T R O L L E R", s_link->local ? COL_ACCENT : COL_ACCENT2,
-            kCtrlMenu, sizeof(kCtrlMenu) / sizeof(kCtrlMenu[0]),
-            &s_overlay);
+            items, n, &s_overlay);
 }
 
 // ---------------------------------------------------------------- pickers
@@ -1151,7 +1148,7 @@ void controller_create(const DialLink *link) {
   // Waiting panel (shown until a page connects and sends state)
   s_wait = lv_obj_create(s_scr);
   lv_obj_remove_style_all(s_wait);
-  lv_obj_set_size(s_wait, 270, 200);
+  lv_obj_set_size(s_wait, 270, 240);
   lv_obj_align(s_wait, LV_ALIGN_CENTER, 0, -6);
   lv_obj_set_flex_flow(s_wait, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(s_wait, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -1165,6 +1162,18 @@ void controller_create(const DialLink *link) {
                               s_link->local ? "Connecting..." : ctrl_transport()->how);
   lv_obj_set_width(how, 240);
   lv_obj_set_style_text_align(how, LV_TEXT_ALIGN_CENTER, 0);
+  // Ways out while nothing's connected: the menu (also on a held chip), and
+  // a restart, back to the start-up choice (after an "are you sure?").
+  lv_obj_t *outs = lv_obj_create(s_wait);
+  lv_obj_remove_style_all(outs);
+  lv_obj_set_size(outs, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(outs, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(outs, 14, 0);
+  lv_obj_set_style_pad_top(outs, 6, 0);
+  lv_obj_t *set = theme_pill(outs, LV_SYMBOL_SETTINGS " Settings", COL_DIM, 116, 38);
+  lv_obj_add_event_cb(set, [](lv_event_t *) { open_menu(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *rst = theme_pill(outs, LV_SYMBOL_REFRESH " Restart", COL_DIM, 116, 38);
+  lv_obj_add_event_cb(rst, [](lv_event_t *) { confirm_restart(); }, LV_EVENT_CLICKED, nullptr);
 
   // Knob page chip
   s_chip = theme_pill(s_scr, "", COL_ACCENT, 124, 38);
