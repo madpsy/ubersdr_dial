@@ -38,7 +38,7 @@ step "Building and staging the flasher binaries..."
 for f in bootloader partitions firmware; do
   cmp -s ".pio/build/jc3636k718/$f.bin" "docs/flash/$f.bin" || fail "docs/flash/$f.bin doesn't match the build"
 done
-strings docs/flash/firmware.bin | grep -q "v$VER" || fail "firmware.bin doesn't contain v$VER"
+grep -aq "v$VER" docs/flash/firmware.bin || fail "firmware.bin doesn't contain v$VER"
 ok "Binaries are this build, and the firmware says v$VER"
 
 step "Committing, tagging and pushing..."
