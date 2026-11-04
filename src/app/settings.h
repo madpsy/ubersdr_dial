@@ -9,6 +9,7 @@ struct Settings {
   String inst_url;   // e.g. https://n2epe.tunnel.ubersdr.org/
   String inst_call;
   String inst_name;
+  String favs;  // favourite receivers: UUIDs, comma separated
   uint32_t freq_hz = 14200000;
   uint32_t span_hz = 500000;
   uint8_t brightness = 80;

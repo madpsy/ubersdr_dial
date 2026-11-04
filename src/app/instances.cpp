@@ -1,5 +1,7 @@
 #include "instances.h"
 
+#include "settings.h"
+
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
@@ -152,6 +154,7 @@ static bool probe(IPAddress ip, uint16_t port, Instance *in) {
   filter["receiver"]["location"] = true;
   filter["max_clients"] = true;
   filter["available_clients"] = true;
+  filter["public_uuid"] = true;
   JsonDocument doc;
   // getString(), not getStream(): receivers answer chunked, and the raw stream
   // still has the chunk sizes in it. The description is only a few KB.
@@ -165,7 +168,8 @@ static bool probe(IPAddress ip, uint16_t port, Instance *in) {
   in->max_clients = doc["max_clients"] | 0;
   in->available = doc["available_clients"] | 0;
   in->url = base;
-  in->id = base;
+  in->id = doc["public_uuid"] | "";  // same UUID as the directory's id
+  if (in->id.isEmpty()) in->id = base;
   in->local = true;
   if (in->callsign.isEmpty()) in->callsign = ip.toString();
   return true;
@@ -290,3 +294,25 @@ FetchState instances_state() { return s_state; }
 const String &instances_error() { return s_error; }
 const std::vector<Instance> &instances_list() { return s_list; }
 int instances_local_count() { return s_nlocal; }
+
+// ---------------------------------------------------------------- favourites
+// g_settings.favs: UUIDs separated by commas.
+bool instances_is_fav(const String &id) {
+  if (id.isEmpty()) return false;
+  return ("," + g_settings.favs + ",").indexOf("," + id + ",") >= 0;
+}
+
+bool instances_toggle_fav(const String &id) {
+  if (id.isEmpty()) return false;
+  bool now = !instances_is_fav(id);
+  if (now) {
+    if (!g_settings.favs.isEmpty()) g_settings.favs += ",";
+    g_settings.favs += id;
+  } else {
+    String s = "," + g_settings.favs + ",";
+    s.replace("," + id + ",", ",");
+    g_settings.favs = s.length() > 2 ? s.substring(1, s.length() - 1) : "";
+  }
+  settings_save();
+  return now;
+}

@@ -7,7 +7,7 @@
 // other UberSDR clients find them) first, then the public directory
 // (instances.ubersdr.org).
 struct Instance {
-  String id;
+  String id;  // the receiver's UUID (directory id / description public_uuid)
   String callsign;
   String name;
   String location;
@@ -26,3 +26,8 @@ FetchState instances_state();
 const String &instances_error();
 const std::vector<Instance> &instances_list();  // local ones first
 int instances_local_count();                    // how many of the list's head are local
+
+// Favourites, by receiver UUID (saved in settings). A favourite that isn't in
+// the current list just isn't shown; it's back when the receiver is.
+bool instances_is_fav(const String &id);
+bool instances_toggle_fav(const String &id);  // returns true if it's now a favourite

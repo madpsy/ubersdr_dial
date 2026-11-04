@@ -59,6 +59,7 @@ void settings_load() {
   g_settings.inst_url = s_prefs.getString("i_url", "");
   g_settings.inst_call = s_prefs.getString("i_call", "");
   g_settings.inst_name = s_prefs.getString("i_name", "");
+  g_settings.favs = s_prefs.getString("favs", "");
   g_settings.freq_hz = s_prefs.getUInt("freq", g_settings.freq_hz);
   g_settings.span_hz = s_prefs.getUInt("span", g_settings.span_hz);
   g_settings.brightness = s_prefs.getUChar("bl", g_settings.brightness);
@@ -87,6 +88,7 @@ void settings_save() {
   s_prefs.putString("i_url", g_settings.inst_url);
   s_prefs.putString("i_call", g_settings.inst_call);
   s_prefs.putString("i_name", g_settings.inst_name);
+  s_prefs.putString("favs", g_settings.favs);
   s_prefs.putUInt("freq", g_settings.freq_hz);
   s_prefs.putUInt("span", g_settings.span_hz);
   s_prefs.putUChar("bl", g_settings.brightness);

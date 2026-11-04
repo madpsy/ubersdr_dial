@@ -61,7 +61,12 @@ void setup() {
   Serial.begin(115200);
   // USB serial writes otherwise block up to 100 ms when no host is reading,
   // which stalls whichever task logs (audio/network) -> dropouts. Drop logs instead.
-  Serial.setTxTimeoutMs(0);
+  // Not 0: HWCDC::write() counts `tries = tx_timeout_ms` down with tries-- and
+  // only gives up at tries == 0, so 0 wraps to 4 billion and a full buffer
+  // (a logger attaching/detaching, or none reading) hangs the printing task
+  // forever while holding the lock: the UI froze, or audio went silent until a
+  // host drained it. 1 ms gives up after one stalled millisecond.
+  Serial.setTxTimeoutMs(1);
   mbedtls_platform_set_calloc_free(tls_calloc, heap_caps_free);
   Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
   sleep_boot();  // release pins held through deep sleep; note what woke us
