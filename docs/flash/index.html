@@ -104,6 +104,7 @@
         font-size: 0.9rem;
       }
       .steps li:last-child { border-bottom: none; }
+      .steps li .t { flex: 1; }
       .steps li::before {
         content: counter(step);
         flex-shrink: 0;
@@ -227,10 +228,10 @@
       </div>
 
       <ol class="steps">
-        <li>Plug the dial into this computer with a USB-C <em>data</em> cable.</li>
-        <li>Enter your Wi-Fi details above, or leave them blank.</li>
-        <li>Click <strong>Install</strong>, pick the port that appears (<em>USB JTAG/serial debug unit</em>), and follow the prompts.</li>
-        <li>On a first install, <strong>Erase device</strong> is recommended. It also clears any settings saved on the dial.</li>
+        <li><span class="t">Plug the dial into this computer with a USB-C <em>data</em> cable.</span></li>
+        <li><span class="t">Enter your Wi-Fi details above, or leave them blank.</span></li>
+        <li><span class="t">Click <strong>Connect</strong>, pick the port that appears (<em>USB JTAG/serial debug unit</em>), and follow the prompts.</span></li>
+        <li><span class="t">On a first install, <strong>Erase device</strong> is recommended. It also clears any settings saved on the dial.</span></li>
       </ol>
 
       <div class="warn">
@@ -245,22 +246,22 @@
         download mode by hand. This is needed if the firmware on it has crashed or never
         finished flashing.
         <ol style="margin:6px 0 0;padding-left:20px">
-          <li>Switch the dial off.</li>
-          <li>Push a pin (a SIM tool or straightened paper clip) into the small hole next to the
-              USB-C port, and keep it held down. That's the BOOT button.</li>
-          <li>With the pin still held, switch the dial on, then let go.</li>
+          <li><span class="t">Switch the dial off.</span></li>
+          <li><span class="t">Push a pin (a SIM tool or straightened paper clip) into the small hole next to the
+              USB-C port, and keep it held down. That's the BOOT button.</span></li>
+          <li><span class="t">With the pin still held, switch the dial on, then let go.</span></li>
         </ol>
-        The screen stays dark: that's expected. Click <strong>Install</strong> and pick the port.
+        The screen stays dark: that's expected. Click <strong>Connect</strong> and pick the port.
         After flashing, switch the dial off and on again.
       </div>
 
       <h2>After flashing</h2>
 
       <ol class="steps">
-        <li>The dial restarts and asks which mode to use: <strong>Receiver</strong> (Wi-Fi) or <strong>Controller</strong> (Bluetooth).</li>
-        <li><strong>Receiver:</strong> with Wi-Fi baked in, the dial joins your network and lists receivers. Local receivers come first, then public ones. Pick one and tap <strong>Listen</strong>.</li>
-        <li>No Wi-Fi baked in? The dial starts a hotspot called <code>UberSDR-Dial-XXXX</code>. Join it from a phone and the setup page opens (or browse to <code>http://192.168.4.1/</code>). Pick your network from the list and enter its password.</li>
-        <li><strong>Controller:</strong> open the UberSDR v2 web UI in Chrome or Edge and connect to <em>UberSDR Dial XXXX</em> over Bluetooth.</li>
+        <li><span class="t">The dial restarts and asks which mode to use: <strong>Receiver</strong> (Wi-Fi) or <strong>Controller</strong> (Bluetooth).</span></li>
+        <li><span class="t"><strong>Receiver:</strong> with Wi-Fi baked in, the dial joins your network and lists receivers. Local receivers come first, then public ones. Pick one and tap <strong>Listen</strong>.</span></li>
+        <li><span class="t">No Wi-Fi baked in? The dial starts a hotspot called <code>UberSDR-Dial-XXXX</code>. Join it from a phone and the setup page opens (or browse to <code>http://192.168.4.1/</code>). Pick your network from the list and enter its password.</span></li>
+        <li><span class="t"><strong>Controller:</strong> open the UberSDR v2 web UI in Chrome or Edge and connect to <em>UberSDR Dial XXXX</em> over Bluetooth.</span></li>
       </ol>
 
       <h2>Links</h2>

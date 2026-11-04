@@ -9,7 +9,7 @@ on a rotary knob, built around an ESP32-S3.
 ### From your browser (easiest)
 
 **[Open the web flasher](https://madpsy.github.io/ubersdr_dial/flash/)** in
-Chrome or Edge, plug the dial in over USB-C, and click **Install**. You don't
+Chrome or Edge, plug the dial in over USB-C, and click **Connect**. You don't
 need drivers or a toolchain, and usually not the BOOT button either.
 
 You can also enter your Wi-Fi details first. The page adds them to the flash
