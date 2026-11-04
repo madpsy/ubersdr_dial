@@ -56,7 +56,7 @@ void ui_show_mode_select(void (*on_pick)(int)) {
 void ui_show_controller() {
   leaving();
   s_cur = Screen::Controller;
-  controller_create(&kBleLink);
+  controller_create(&kCtrlLink);
 }
 
 Screen ui_current() { return s_cur; }

@@ -22,7 +22,7 @@ void picker_tick(int knob);
 void modesel_create(void (*on_pick)(int));
 void modesel_tick(int knob);
 // The dial screen (both modes): Radio = receiver mode (kLocalLink), Controller
-// = Bluetooth (kBleLink).
+// = Bluetooth or USB (kCtrlLink).
 struct DialLink;
 void controller_create(const DialLink *link);
 void controller_tick(int knob);

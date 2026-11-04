@@ -3,11 +3,11 @@
 
 // What the dial screen talks to. The screen is the same in both modes; only
 // the far end differs:
-//   Bluetooth (controller mode): the UberSDR v2 page does the work and sends
-//     its state and waterfall lines back (ble_ctrl).
+//   Controller mode (Bluetooth or USB): the UberSDR v2 page does the work and
+//     sends its state and waterfall lines back (ctrl_link).
 //   Wi-Fi (receiver mode): the dial is the radio itself (local_radio), and
 //     answers the same codes the same way the page would.
-// Codes are the BLE protocol's (docs/BLE_PROTOCOL.md, controls/dial.js).
+// Codes are the BLE protocol's (docs/PROTOCOL.md, controls/dial.js).
 
 // Receiver state shown by the screen.
 struct DialState {
@@ -63,5 +63,5 @@ struct DialLink {
   void (*status)(String *text, uint32_t *dot_col);
 };
 
-extern const DialLink kBleLink;    // controller mode (ble_ctrl.cpp)
+extern const DialLink kCtrlLink;   // controller mode, Bluetooth or USB (ctrl_link.cpp)
 extern const DialLink kLocalLink;  // receiver mode (local_radio.cpp)

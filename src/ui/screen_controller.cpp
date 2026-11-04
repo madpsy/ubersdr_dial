@@ -10,7 +10,7 @@
 
 #include <src/core/lv_obj_event_private.h>  // lv_hit_test_info_t (LV_EVENT_HIT_TEST)
 
-#include "../app/ble_ctrl.h"
+#include "../app/ctrl_link.h"
 #include "../app/dial_link.h"
 #include "../app/local_radio.h"
 #include "../app/sdr.h"
@@ -60,7 +60,7 @@ static lv_obj_t *s_scr, *s_dot, *s_status, *s_freq, *s_info, *s_snr, *s_snr_cap,
 static Page s_page = P_TUNE;
 static lv_obj_t *s_page_btn[P_COUNT];
 static const char *kPageName[P_COUNT] = {"TUNE", "VOL", "ZOOM", "SQL", "BW", "STEP"};
-static const DialLink *s_link = &kBleLink;
+static const DialLink *s_link = &kCtrlLink;
 static DialState s_st;
 static float s_meter = RIM_SNR_MIN;
 static int s_rim_val = INT32_MIN;
@@ -968,7 +968,7 @@ void controller_create(const DialLink *link) {
     display_set_background(nullptr, 0);
   }
   s_page = P_TUNE;
-  s_st = BleRxState();
+  s_st = DialState();
 
   // Waterfall background (bottom-most), optional
   s_wf_floor = -999;
@@ -1148,14 +1148,12 @@ void controller_create(const DialLink *link) {
   lv_obj_set_flex_align(s_wait, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_row(s_wait, 8, 0);
   theme_label(s_wait, &lv_font_montserrat_40, s_link->local ? COL_ACCENT : COL_ACCENT2,
-              s_link->local ? LV_SYMBOL_WIFI : LV_SYMBOL_BLUETOOTH);
+              s_link->local ? LV_SYMBOL_WIFI : ctrl_transport()->symbol);
   s_wait_name = theme_label(s_wait, &font_latin_16, COL_TEXT,
-                            s_link->local ? g_settings.inst_call.c_str() : ble_ctrl_name().c_str());
+                            s_link->local ? g_settings.inst_call.c_str() : ctrl_name().c_str());
   // Short lines: the round screen is narrow this far from the centre.
   lv_obj_t *how = theme_label(s_wait, &lv_font_montserrat_12, COL_DIM,
-                              s_link->local ? "Connecting..."
-                                            : "Open UberSDR in Chrome\nor the desktop app, then\nSDR Control  " LV_SYMBOL_RIGHT
-                                              "  Dial  " LV_SYMBOL_RIGHT "  Connect");
+                              s_link->local ? "Connecting..." : ctrl_transport()->how);
   lv_obj_set_width(how, 240);
   lv_obj_set_style_text_align(how, LV_TEXT_ALIGN_CENTER, 0);
 

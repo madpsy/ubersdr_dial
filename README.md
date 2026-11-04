@@ -44,9 +44,13 @@ already highlighted.
   the list, and it streams audio to its own speaker while showing the
   spectrum and waterfall. Receivers on your own network are found over mDNS
   and listed first, above the public ones.
-- **Controller (Bluetooth):** the dial is a remote knob for the UberSDR v2 web
-  UI. Connect to it from the browser with Web Bluetooth. The dial then shows the
-  page's frequency, signal and waterfall.
+- **Controller:** the dial is a remote knob for the UberSDR v2 web UI. In SDR
+  Control → Dial, connect over **Bluetooth** (Web Bluetooth) or **USB**
+  (Web Serial, over the USB-C cable). Pick the same one on the dial's start
+  screen. The dial then shows the page's frequency, signal and waterfall. USB
+  needs no pairing and charges the dial while you use it. Both work in Chrome
+  or Edge and in the UberSDR desktop app. The protocol is in
+  [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 Both modes share the same screen:
 
@@ -130,8 +134,9 @@ Pages publishes them from the `docs/` folder. The page itself is
 | Path | Contents |
 | --- | --- |
 | `src/hw/` | Board drivers: display and layered compositor, touch, encoder, LEDs, haptics, battery |
-| `src/app/` | Receiver engine (`local_radio`), UberSDR spectrum and audio sockets (`sdr`, `audio`), Bluetooth link to v2 (`ble_ctrl`), settings, Wi-Fi setup |
+| `src/app/` | Receiver engine (`local_radio`), UberSDR spectrum and audio sockets (`sdr`, `audio`), the controller link to v2 (`ctrl_link`) over Bluetooth (`ble_ctrl`) or USB (`usb_ctrl`), settings, Wi-Fi setup |
 | `src/ui/` | LVGL screens: the dial screen used by both modes (`screen_controller.cpp`), receiver picker, menus, fonts |
 | `include/lv_conf.h` | LVGL configuration |
 | `partitions_dial.csv` | Flash layout: the 16 MB default plus a `usercfg` slot for the web flasher |
 | `docs/flash/` | Browser flasher (GitHub Pages) |
+| `docs/PROTOCOL.md` | Controller protocol: the records, and how Bluetooth and USB carry them |

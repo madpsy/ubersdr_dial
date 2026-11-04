@@ -7,7 +7,7 @@
 #include <mbedtls/platform.h>
 
 #include "app/audio.h"
-#include "app/ble_ctrl.h"
+#include "app/ctrl_link.h"
 #include "app/instances.h"
 #include "app/saver.h"
 #include "app/sdr.h"
@@ -49,6 +49,9 @@ static void enter_setup(const char *reason) {
 }
 
 void setup() {
+  // Controller-over-USB frames: a waterfall line is ~180 bytes, ten a second.
+  Serial.setRxBufferSize(2048);
+  Serial.setTxBufferSize(1024);
   Serial.begin(115200);
   // USB serial writes otherwise block up to 100 ms when no host is reading,
   // which stalls whichever task logs (audio/network) -> dropouts. Drop logs instead.
@@ -104,16 +107,18 @@ static void start_receiver() {
   else ui_show_picker();
 }
 
-// Controller mode: Bluetooth only. Wi-Fi stays off, so the two never share
-// the radio.
-static void start_controller() {
+// Controller mode, over Bluetooth or USB serial. Wi-Fi stays off, so it never
+// shares the radio with Bluetooth.
+static bool s_usb_ctrl = false;  // the serial port carries controller frames
+static void start_controller(bool usb) {
   WiFi.mode(WIFI_OFF);
   // Wi-Fi's off, so internal RAM is free: a 120-line draw buffer means a
   // quarter of the render passes over the UI for every waterfall line.
   // Layered UI (see display.h): the waterfall moves without LVGL redrawing
   // the widgets over it. Falls back to a bigger draw buffer if it can't.
   if (!display_layered_begin() && !display_use_buffer_lines(120)) display_use_buffer_lines(60);
-  ble_ctrl_start();
+  s_usb_ctrl = usb;
+  ctrl_start(usb ? &kUsbTransport : &kBleTransport);
   ui_show_controller();
 }
 
@@ -146,6 +151,7 @@ static int serial_command_key() {
 }
 
 static void serial_commands() {
+  if (s_usb_ctrl) return;  // the port is the page's: its bytes are frames, not commands
   int c;
   while ((c = serial_command_key()) >= 0) {
     if (c == 't') {
@@ -201,7 +207,7 @@ void loop() {
   if (s_start_mode >= 0) {
     int m = s_start_mode;
     s_start_mode = -1;
-    if (m == 1) start_controller();
+    if (m == 1 || m == 2) start_controller(m == 2);
     else start_receiver();
   }
   static uint32_t m_ui = 0, m_other = 0, m_n = 0, m_at = 0;
