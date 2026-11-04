@@ -15,3 +15,6 @@ uint32_t knob_gap_ms();
 int knob_accel();
 // Milliseconds since the screen was last touched.
 uint32_t touch_idle_ms();
+// Before deep sleep: let the touch chip drop to its low-power scan (it still
+// pulses INT on a touch, which can wake the dial).
+void touch_sleep();

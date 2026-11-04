@@ -4,6 +4,7 @@
 // Minimal ST77916 QSPI driver (ESP-IDF spi_master) wired into LVGL v9.
 void display_init();
 void display_set_brightness(uint8_t pct);  // 0..100
+void display_sleep();  // before deep sleep: panel off and asleep, backlight pin LOW
 // Bigger LVGL draw buffer (fewer render passes per frame). Only where internal
 // RAM is free — controller mode, Wi-Fi off. Returns false if it couldn't.
 bool display_use_buffer_lines(int lines);

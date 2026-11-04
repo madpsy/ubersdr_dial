@@ -2,6 +2,7 @@
 // dial drives the UberSDR web UI, over Bluetooth or a USB cable). Asked on
 // every boot; the last choice is pre-highlighted so a tap is all it takes.
 #include "../app/settings.h"
+#include "../app/wifi_setup.h"
 
 #ifndef DIAL_VERSION
 #define DIAL_VERSION "dev"
@@ -61,6 +62,28 @@ static lv_obj_t *choice(lv_obj_t *scr, int idx, const char *sym, const char *tit
   return b;
 }
 
+// Settings from here: Wi-Fi setup (for Receiver mode), then the dial-wide ones.
+static void open_settings() {
+  static MenuItem items[16];
+  static int n = 0;
+  if (!n) {
+    items[n++] = {LV_SYMBOL_WIFI, "Wi-Fi setup", nullptr,
+                  [](int) {
+                    menu_close();
+                    ui_show_boot("Starting setup hotspot...");
+                    for (int i = 0; i < 25; i++) {  // let it show: the scan below blocks a few seconds
+                      lv_timer_handler();
+                      delay(10);
+                    }
+                    wifi_setup_start();
+                    ui_show_setup("");
+                  },
+                  nullptr, 0};
+    for (int i = 0; i < kNumDeviceMenu && n < 16; i++) items[n++] = kDeviceMenu[i];
+  }
+  menu_open(s_scr, "S E T T I N G S", COL_TEXT, items, n, &s_overlay);
+}
+
 void modesel_create(void (*on_pick)(int)) {
   s_on_pick = on_pick;
   s_sel = g_settings.start_mode < kChoices ? g_settings.start_mode : 0;
@@ -78,12 +101,11 @@ void modesel_create(void (*on_pick)(int)) {
   lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -80);
   lv_obj_t *v = theme_label(scr, &lv_font_montserrat_12, COL_DIM, "v" DIAL_VERSION);
   lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, -60);
-  // Dial-wide settings (brightness, haptics, screen saver) before choosing.
+  // Settings before choosing: Wi-Fi setup and the dial-wide ones.
   lv_obj_t *gear = theme_pill(scr, LV_SYMBOL_SETTINGS, COL_DIM, 52, 40);
   lv_obj_align(gear, LV_ALIGN_BOTTOM_MID, 0, -12);
   lv_obj_add_event_cb(
-      gear, [](lv_event_t *) { menu_open(s_scr, "S E T T I N G S", COL_TEXT, kDeviceMenu, kNumDeviceMenu, &s_overlay); },
-      LV_EVENT_CLICKED, nullptr);
+gear, [](lv_event_t *) { open_settings(); }, LV_EVENT_CLICKED, nullptr);
   highlight();
   ui_load(scr);
 }

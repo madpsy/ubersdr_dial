@@ -3,12 +3,14 @@
 
 #include "../app/settings.h"
 #include "../app/wifi_setup.h"
+#include "confirm.h"
 #include "theme.h"
 #include "ui.h"
 
 void ui_load(lv_obj_t *scr);
 
 static lv_obj_t *s_boot_status;
+static lv_obj_t *s_setup_scr, *s_setup_overlay;  // the restart prompt while open
 
 static lv_obj_t *brand(lv_obj_t *scr, int y) {
   lv_obj_t *t = theme_label(scr, &lv_font_montserrat_40, COL_TEXT, "UberSDR");
@@ -77,6 +79,20 @@ void setup_create(const char *reason) {
   String msg = "Join  " + ap + "\nthen open 192.168.4.1";
   lv_obj_t *m = theme_label(scr, &lv_font_montserrat_14, COL_DIM, msg.c_str());
   lv_obj_set_style_text_align(m, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(m, LV_ALIGN_CENTER, 0, 92);
+  lv_obj_align(m, LV_ALIGN_CENTER, 0, 88);
+
+  // The way out without finishing setup (e.g. Receiver picked with no Wi-Fi
+  // about): a restart, back to the start-up choice, after saying what it means.
+  s_setup_scr = scr;
+  s_setup_overlay = nullptr;
+  lv_obj_t *skip = theme_pill(scr, "Skip", COL_DIM, 96, 36);
+  lv_obj_align(skip, LV_ALIGN_BOTTOM_MID, 0, -16);
+  lv_obj_add_event_cb(
+      skip,
+      [](lv_event_t *) {
+        confirm_restart_open(s_setup_scr, &s_setup_overlay, "Skip Wi-Fi setup?",
+                             "Receiver mode needs Wi-Fi.\nSet it up later in Settings.", "Skip");
+      },
+      LV_EVENT_CLICKED, nullptr);
   ui_load(scr);
 }

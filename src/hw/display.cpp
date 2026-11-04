@@ -396,6 +396,15 @@ void display_set_brightness(uint8_t pct) {
   ledcWrite(0, (uint32_t)pct * 255 / 100);
 }
 
+void display_sleep() {
+  ledcWrite(0, 0);
+  ledcDetachPin(PIN_LCD_BL);
+  pinMode(PIN_LCD_BL, OUTPUT);
+  digitalWrite(PIN_LCD_BL, LOW);
+  lcd_cmd(0x28, nullptr, 0);  // display off
+  lcd_cmd(0x10, nullptr, 0);  // sleep in
+}
+
 void display_init() {
   ledcSetup(0, 20000, 8);
   ledcAttachPin(PIN_LCD_BL, 0);

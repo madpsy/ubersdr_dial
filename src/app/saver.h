@@ -13,6 +13,7 @@ enum SaverMode : uint8_t { SAVER_DIM = 0, SAVER_OFF = 1, SAVER_SPECTRUM = 2, SAV
 void saver_tick();             // call every loop (after input has been read)
 void saver_activity();         // something happened: wake / restart the timer
 bool saver_active();
+uint32_t saver_idle_ms();       // since the last knob turn or touch
 bool saver_spectrum_paused();  // screens skip spectrum/waterfall drawing
 bool saver_screen_off();       // touch input should be swallowed to wake
 

@@ -8,10 +8,12 @@
 
 #include "app/audio.h"
 #include "app/ctrl_link.h"
+#include "app/dial_link.h"
 #include "app/instances.h"
 #include "app/saver.h"
 #include "app/sdr.h"
 #include "app/settings.h"
+#include "app/sleep.h"
 #include "app/wifi_setup.h"
 #include "hw/battery.h"
 #include "hw/display.h"
@@ -62,6 +64,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   mbedtls_platform_set_calloc_free(tls_calloc, heap_caps_free);
   Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
+  sleep_boot();  // release pins held through deep sleep; note what woke us
   settings_load();
 
   lv_init();
@@ -82,6 +85,24 @@ void setup() {
   }
   display_set_brightness(g_settings.brightness);
 
+  // Sleep: only when nothing would be cut off. Wakes back into the same mode.
+  sleep_set_ok([]() -> bool {
+    switch (ui_current()) {
+      case Screen::Controller: return !kCtrlLink.connected();  // no page using it
+      case Screen::Radio: return g_settings.muted;             // not playing
+      default: return true;                                    // start-up choice, setup, picker
+    }
+  });
+  sleep_set_resume([]() -> int {
+    Screen s = ui_current();
+    return s == Screen::Controller || s == Screen::Radio ? g_settings.start_mode : -1;
+  });
+
+  // Woken from sleep in a mode: straight back into it.
+  if (sleep_woke_mode() >= 0) {
+    s_start_mode = sleep_woke_mode();
+    return;
+  }
   // Asked every boot: be the radio (Wi-Fi) or drive the web UI (Bluetooth).
   ui_show_mode_select([](int mode) { s_start_mode = mode; });
 }
@@ -200,6 +221,12 @@ static void serial_commands() {
       Serial.println("[dbg] colour bands for 30 s: track, panel, background, grey");
     } else if (c == 'z') {
       display_debug_reinit();
+    } else if (c == 's' || c == 'k') {
+      Serial.printf("[dbg] sleep now (%s)\n", c == 's' ? "knob or touch wakes" : "knob only wakes");
+      sleep_debug_touch_wake(c == 's');
+      sleep_start();
+    } else if (c == 'w') {
+      Serial.printf("[dbg] %s\n", sleep_wake_note());
     } else if (c == 'i') {
       Serial.printf("[dbg] rssi %d dBm, ch %d, internal heap %u, psram %u\n", (int)WiFi.RSSI(), WiFi.channel(),
                     (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
@@ -224,6 +251,7 @@ void loop() {
   ui_tick();
   uint32_t m2 = micros();
   saver_tick();
+  sleep_tick();
   m_other += (micros() - m2) + (m1 - m0);
   m_ui += m2 - m1;
   if (++m_n && millis() - m_at > 5000) {

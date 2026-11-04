@@ -14,6 +14,8 @@ static const MenuChoice kSaverTimes[] = {{"30 s", 30}, {"1 min", 60}, {"2 min", 
 static const MenuChoice kSaverOffTimes[] = {{"Auto\n3x dim", 0}, {"5 min", 300},   {"10 min", 600},
                                             {"20 min", 1200},     {"30 min", 1800}, {"1 hour", 3600}};
 
+static const MenuChoice kSleepTimes[] = {{"15 min", 15}, {"30 min", 30}, {"1 hour", 60}, {"2 hours", 120}, {"Never", 0}};
+
 const MenuItem kDeviceMenu[] = {
     {LV_SYMBOL_EYE_OPEN, "Brightness", [] { return (int)g_settings.brightness; },
      [](int v) {
@@ -47,5 +49,13 @@ const MenuItem kDeviceMenu[] = {
        settings_save();
      },
      kSaverOffTimes, 6, [] { return g_settings.saver_mode == SAVER_DIM_OFF; }},
+    // Deep sleep; only when nothing's using the dial (no page connected,
+    // receiver muted). A knob turn wakes it, back into the same mode.
+    {LV_SYMBOL_DOWNLOAD, "Sleep after", [] { return (int)g_settings.sleep_mins; },
+     [](int v) {
+       g_settings.sleep_mins = v;
+       settings_save();
+     },
+     kSleepTimes, 5},
 };
 const int kNumDeviceMenu = sizeof(kDeviceMenu) / sizeof(kDeviceMenu[0]);

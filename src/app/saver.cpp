@@ -77,6 +77,7 @@ void saver_tick() {
   Serial.printf("[saver] %s after %u s idle\n", saver_mode_name(mode), g_settings.saver_secs);
 }
 
+uint32_t saver_idle_ms() { return millis() - s_last_activity; }
 bool saver_active() { return s_stage != AWAKE; }
 bool saver_spectrum_paused() {
   return s_stage == DARK || (s_stage == DIMMED && g_settings.saver_mode == SAVER_SPECTRUM);

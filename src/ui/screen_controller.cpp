@@ -22,6 +22,7 @@
 #include "../hw/input.h"
 #include "../hw/led_ring.h"
 #include "battery_icon.h"
+#include "confirm.h"
 #include "device_menu.h"
 #include "menu.h"
 #include "padlock.h"
@@ -631,30 +632,10 @@ static void close_overlay() {
   s_overlay = nullptr;
 }
 
-// "Are you sure?" before restarting (back to the start-up choice of
-// Receiver / Bluetooth / USB, which is only asked at boot).
+// "Are you sure?" before restarting (back to the start-up choice).
 static void confirm_restart() {
   menu_close();  // if it came from the menu (forgets the menu's list too)
-  close_overlay();
-  s_overlay = lv_obj_create(s_scr);
-  lv_obj_remove_style_all(s_overlay);
-  lv_obj_set_size(s_overlay, 360, 360);
-  lv_obj_center(s_overlay);
-  lv_obj_set_style_bg_color(s_overlay, C(COL_BG), 0);
-  lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
-  lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_t *t = theme_label(s_overlay, &lv_font_montserrat_20, COL_TEXT, "Restart the dial?");
-  lv_obj_align(t, LV_ALIGN_CENTER, 0, -52);
-  lv_obj_t *sub = theme_label(s_overlay, &lv_font_montserrat_14, COL_DIM, "Back to choosing Receiver,\nBluetooth or USB");
-  lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(sub, LV_ALIGN_CENTER, 0, -14);
-  lv_obj_t *no = theme_pill(s_overlay, "Cancel", COL_DIM, 110, 44);
-  lv_obj_align(no, LV_ALIGN_CENTER, -62, 44);
-  lv_obj_add_event_cb(no, [](lv_event_t *) { close_overlay(); }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *yes = theme_pill(s_overlay, LV_SYMBOL_REFRESH " Restart", COL_WARN, 110, 44);
-  lv_obj_align(yes, LV_ALIGN_CENTER, 62, 44);
-  lv_obj_add_event_cb(yes, [](lv_event_t *) { ESP.restart(); }, LV_EVENT_CLICKED, nullptr);
+  confirm_restart_open(s_scr, &s_overlay);
 }
 
 static void send_wf_rate();

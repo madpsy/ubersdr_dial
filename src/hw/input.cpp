@@ -105,6 +105,13 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   data->point.y = ly;
 }
 
+void touch_sleep() {
+  Wire.beginTransmission(kTouchAddr);
+  Wire.write(0xFE);
+  Wire.write(0x00);  // auto sleep back on
+  Wire.endTransmission();
+}
+
 void input_init() {
   pinMode(PIN_KNOB_CW, INPUT_PULLUP);
   pinMode(PIN_KNOB_CCW, INPUT_PULLUP);
