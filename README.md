@@ -4,14 +4,35 @@ Firmware that turns the **Guition JC3636K718** into a hand-held front end for
 [UberSDR](https://ubersdr.org). The JC3636K718 is a 1.8" round touch display
 on a rotary knob, built around an ESP32-S3.
 
+## Install
+
+### From your browser (easiest)
+
+**[Open the web flasher](https://madpsy.github.io/ubersdr_dial/flash/)** in
+Chrome or Edge, plug the dial in over USB-C, and click **Install**. You don't
+need drivers, a BOOT button or a toolchain.
+
+You can also enter your Wi-Fi details first. The page adds them to the flash
+image right there in your browser, so they're never sent anywhere. On first
+boot the dial joins your network straight away. If you leave them blank, the
+dial starts its setup hotspot instead (see below).
+
+How it works: the settings go into a dedicated `usercfg` flash partition. The
+firmware imports them on first boot, then erases that partition.
+
+### From source
+
+See [Building](#building).
+
 ## Features
 
 Each time it starts, the dial asks which mode to use. Your last choice is
 already highlighted.
 
-- **Receiver (Wi-Fi):** the dial is the radio. Pick a public UberSDR receiver
-  from the list, and it streams audio to its own speaker while showing the
-  spectrum and waterfall.
+- **Receiver (Wi-Fi):** the dial is the radio. Pick an UberSDR receiver from
+  the list, and it streams audio to its own speaker while showing the
+  spectrum and waterfall. Receivers on your own network are found over mDNS
+  and listed first, above the public ones.
 - **Controller (Bluetooth):** the dial is a remote knob for the UberSDR v2 web
   UI. Connect to it from the browser with Web Bluetooth. The dial then shows the
   page's frequency, signal and waterfall.
@@ -80,6 +101,18 @@ stty -F /dev/ttyACM0 -hupcl raw -echo 115200 && cat /dev/ttyACM0
 `jc3636k718` is the environment to use. `jc3636k718-idf`, which builds Arduino
 as an ESP-IDF component, is an experiment and isn't recommended.
 
+### Updating the web flasher
+
+```sh
+./build.sh
+```
+
+This builds the firmware and copies `bootloader.bin`, `partitions.bin`,
+`boot_app0.bin` and `firmware.bin` into `docs/flash/`. Commit them, and GitHub
+Pages publishes them from the `docs/` folder. The page itself is
+`docs/flash/index.html`, using
+[ESP Web Tools](https://esphome.github.io/esp-web-tools/) (Apache 2.0).
+
 ### Layout
 
 | Path | Contents |
@@ -88,3 +121,5 @@ as an ESP-IDF component, is an experiment and isn't recommended.
 | `src/app/` | Receiver engine (`local_radio`), UberSDR spectrum and audio sockets (`sdr`, `audio`), Bluetooth link to v2 (`ble_ctrl`), settings, Wi-Fi setup |
 | `src/ui/` | LVGL screens: the dial screen used by both modes (`screen_controller.cpp`), receiver picker, menus, fonts |
 | `include/lv_conf.h` | LVGL configuration |
+| `partitions_dial.csv` | Flash layout: the 16 MB default plus a `usercfg` slot for the web flasher |
+| `docs/flash/` | Browser flasher (GitHub Pages) |

@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>UberSDR Dial — Web Flasher</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Flash the UberSDR Dial firmware onto a Guition JC3636K718 straight from your browser. Optionally bake in your Wi-Fi settings." />
+    <meta name="color-scheme" content="dark" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #05070d;
+        color: #e6ebf5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+        line-height: 1.6;
+      }
+      header {
+        background: #0d1322;
+        border-bottom: 1px solid #1c2740;
+        padding: 16px 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; color: #fff; letter-spacing: 0.02em; }
+      header h1 span { color: #22d3ee; }
+      header .subtitle { font-size: 0.85rem; color: #7a8599; margin-left: auto; }
+      .content { max-width: 680px; margin: 0 auto; padding: 32px 24px 64px; }
+      h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #c8d0de;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 2rem 0 0.75rem;
+        border-bottom: 1px solid #1c2740;
+        padding-bottom: 6px;
+      }
+      p { margin: 0.5rem 0 1rem; color: #aab3c5; }
+      .card {
+        background: #0d1322;
+        border: 1px solid #1c2740;
+        border-radius: 12px;
+        padding: 22px 24px;
+        margin: 24px 0;
+      }
+      .card-title { font-size: 1rem; font-weight: 600; color: #fff; margin-bottom: 2px; }
+      .card-sub { font-size: 0.85rem; color: #7a8599; margin-bottom: 18px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+      @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+      .field { display: flex; flex-direction: column; gap: 4px; }
+      .field label {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #7a8599;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .field input {
+        background: #05070d;
+        border: 1px solid #1c2740;
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: #e6ebf5;
+        font-size: 0.95rem;
+        font-family: inherit;
+        outline: none;
+      }
+      .field input:focus { border-color: #22d3ee; }
+      .field input::placeholder { color: #4b5568; }
+      .foot { display: flex; align-items: center; gap: 16px; margin-top: 16px; flex-wrap: wrap; }
+      .foot label { font-size: 0.82rem; color: #7a8599; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+      #cfgStatus { font-size: 0.82rem; margin-left: auto; }
+      #cfgStatus.baked { color: #34d399; }
+      #cfgStatus.empty { color: #7a8599; }
+      #cfgStatus.bad { color: #f87171; }
+      .flash { text-align: center; padding: 28px 24px; }
+      .flash .name { font-size: 1.1rem; font-weight: 600; color: #fff; margin-bottom: 6px; }
+      .flash .desc { font-size: 0.875rem; color: #7a8599; margin-bottom: 24px; }
+      esp-web-install-button {
+        --esp-tools-button-color: #22d3ee;
+        --esp-tools-button-text-color: #05070d;
+        --esp-tools-button-border-radius: 8px;
+      }
+      .unsupported {
+        background: #2a1418;
+        border: 1px solid #5a2a32;
+        border-radius: 8px;
+        padding: 14px 18px;
+        color: #f87171;
+        font-size: 0.9rem;
+        text-align: left;
+      }
+      .steps { counter-reset: step; list-style: none; padding: 0; margin: 0; }
+      .steps li {
+        counter-increment: step;
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 10px 0;
+        border-bottom: 1px solid #1c2740;
+        color: #aab3c5;
+        font-size: 0.9rem;
+      }
+      .steps li:last-child { border-bottom: none; }
+      .steps li::before {
+        content: counter(step);
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        background: #1c2740;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #22d3ee;
+        margin-top: 1px;
+      }
+      .note, .warn {
+        border-radius: 0 6px 6px 0;
+        padding: 10px 14px;
+        font-size: 0.875rem;
+        margin: 12px 0;
+      }
+      .note { background: #0f2620; border-left: 3px solid #34d399; color: #9fd8c0; }
+      .warn { background: #2a2210; border-left: 3px solid #fbbf24; color: #e0c27a; }
+      code {
+        background: #0d1322;
+        border: 1px solid #1c2740;
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 0.85em;
+        color: #a5f3fc;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+      a { color: #22d3ee; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+      .links a {
+        background: #0d1322;
+        border: 1px solid #1c2740;
+        border-radius: 6px;
+        padding: 6px 14px;
+        font-size: 0.85rem;
+        color: #c8d0de;
+      }
+      .links a:hover { border-color: #22d3ee; color: #22d3ee; text-decoration: none; }
+      footer {
+        margin-top: 48px;
+        border-top: 1px solid #1c2740;
+        padding-top: 20px;
+        font-size: 0.8rem;
+        color: #4b5568;
+        text-align: center;
+      }
+      footer a { color: #7a8599; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Uber<span>SDR</span> Dial · Web Flasher</h1>
+      <span class="subtitle">Guition JC3636K718</span>
+    </header>
+
+    <div class="content">
+      <p>
+        Flash the UberSDR Dial firmware straight from your browser with
+        <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>.
+        No drivers, Python or PlatformIO needed: just Chrome or Edge and a USB-C cable.
+      </p>
+
+      <h2>1 · Wi-Fi (optional)</h2>
+
+      <div class="card">
+        <div class="card-title">Your Wi-Fi network</div>
+        <div class="card-sub">
+          Fill these in and the dial joins your network on first boot. It needs Wi-Fi
+          for <b>Receiver</b> mode; <b>Controller</b> mode (Bluetooth) doesn't. Leave
+          them blank to set Wi-Fi up later from the dial's setup hotspot.
+        </div>
+        <div class="grid">
+          <div class="field">
+            <label for="cfgSsid">Network name (SSID)</label>
+            <input id="cfgSsid" type="text" maxlength="32" placeholder="MyHomeWiFi" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="cfgPass">Password</label>
+            <input id="cfgPass" type="password" maxlength="64" placeholder="leave blank for an open network" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="foot">
+          <label><input type="checkbox" id="cfgShowPw" /> Show password</label>
+          <span id="cfgStatus" class="empty"></span>
+        </div>
+      </div>
+
+      <div class="note">
+        🔒 Your Wi-Fi details never leave this computer. They're added to the flash
+        image here in the browser and written over USB, and the dial erases them
+        from that spot in flash once it has saved them on first boot.
+      </div>
+
+      <h2>2 · Flash</h2>
+
+      <div class="card flash">
+        <div class="name">UberSDR Dial</div>
+        <div class="desc">Guition JC3636K718 (ESP32-S3) · firmware + your Wi-Fi settings</div>
+        <esp-web-install-button manifest="manifest.json">
+          <span slot="unsupported">
+            <div class="unsupported">
+              ⚠️ <strong>Web Serial isn't available in this browser.</strong><br />
+              Open this page in <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>
+              (desktop, version 89+). Firefox and Safari don't support Web Serial.
+            </div>
+          </span>
+          <span slot="not-allowed">
+            <div class="unsupported">
+              ⚠️ <strong>Web Serial needs a secure context (HTTPS).</strong><br />
+              Serve this page over <code>https://</code>; opening the file from disk
+              (<code>file://</code>) won't work.
+            </div>
+          </span>
+        </esp-web-install-button>
+      </div>
+
+      <ol class="steps">
+        <li>Plug the dial into this computer with a USB-C <em>data</em> cable.</li>
+        <li>Enter your Wi-Fi details above, or leave them blank.</li>
+        <li>Click <strong>Install</strong>, pick the port that appears (<em>USB JTAG/serial debug unit</em>), and follow the prompts.</li>
+        <li>On a first install, <strong>Erase device</strong> is recommended. It also clears any settings saved on the dial.</li>
+      </ol>
+
+      <div class="warn">
+        ⚠️ No port listed? The cable may be charge-only: try another. Close anything else
+        using the port too, such as a serial monitor. The dial uses the ESP32-S3's built-in
+        USB, so it needs no driver and no BOOT button: the flasher resets it into download
+        mode by itself.
+      </div>
+
+      <h2>After flashing</h2>
+
+      <ol class="steps">
+        <li>The dial restarts and asks which mode to use: <strong>Receiver</strong> (Wi-Fi) or <strong>Controller</strong> (Bluetooth).</li>
+        <li><strong>Receiver:</strong> with Wi-Fi baked in, the dial joins your network and lists receivers. Local receivers come first, then public ones. Pick one and tap <strong>Listen</strong>.</li>
+        <li>No Wi-Fi baked in? The dial starts a hotspot called <code>UberSDR-Dial-XXXX</code>. Join it from a phone and the setup page opens (or browse to <code>http://192.168.4.1/</code>). Pick your network from the list and enter its password.</li>
+        <li><strong>Controller:</strong> open the UberSDR v2 web UI in Chrome or Edge and connect to <em>UberSDR Dial XXXX</em> over Bluetooth.</li>
+      </ol>
+
+      <h2>Links</h2>
+      <div class="links">
+        <a href="https://github.com/madpsy/ubersdr_dial" target="_blank" rel="noopener">GitHub repo</a>
+        <a href="https://github.com/madpsy/ubersdr_dial/blob/main/README.md" target="_blank" rel="noopener">README</a>
+        <a href="https://ubersdr.org" target="_blank" rel="noopener">UberSDR</a>
+      </div>
+
+      <footer>
+        Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>
+        (Apache 2.0, by ESPHome / Nabu Casa) ·
+        <a href="https://github.com/madpsy/ubersdr_dial" target="_blank" rel="noopener">UberSDR Dial on GitHub</a>
+      </footer>
+    </div>
+
+    <script type="module" src="install-button.js"></script>
+    <script>
+      // The ESP Web Tools manifest is built here so the Wi-Fi settings can be
+      // added as one more flash part. They're packed as the 8-byte magic
+      // "UBSDRCF1", a uint32 LE JSON length, then the JSON. That goes into the
+      // "usercfg" partition at 0xFF0000 (partitions_dial.csv), which the
+      // firmware imports into NVS on first boot and then erases.
+      (function () {
+        var USERCFG_OFFSET = 0xFF0000;
+        var MAGIC = [0x55, 0x42, 0x53, 0x44, 0x52, 0x43, 0x46, 0x31]; // "UBSDRCF1"
+        var VERSION = '1.0.0';
+        // ESP32-S3: the bootloader is at 0x0 (0x1000 on the original ESP32).
+        var STATIC_PARTS = [
+          ['bootloader.bin', 0x0],
+          ['partitions.bin', 0x8000],
+          ['boot_app0.bin', 0xe000],
+          ['firmware.bin', 0x10000],
+        ];
+
+        var button = document.querySelector('esp-web-install-button');
+        var status = document.getElementById('cfgStatus');
+        var cfgUrl = null, manUrl = null;
+
+        function rebuild() {
+          var parts = STATIC_PARTS.map(function (p) {
+            return { path: new URL(p[0], location.href).href, offset: p[1] };
+          });
+          var ssid = document.getElementById('cfgSsid').value.trim();
+          var pass = document.getElementById('cfgPass').value;
+
+          if (cfgUrl) { URL.revokeObjectURL(cfgUrl); cfgUrl = null; }
+          if (manUrl) { URL.revokeObjectURL(manUrl); manUrl = null; }
+
+          var ssidBytes = new TextEncoder().encode(ssid).length;
+          if (ssid && ssidBytes > 32) {
+            status.textContent = 'Network name is too long (32 bytes max)';
+            status.className = 'bad';
+          } else if (ssid && pass && (pass.length < 8 || pass.length > 64)) {
+            status.textContent = 'Wi-Fi passwords are 8 to 64 characters';
+            status.className = 'bad';
+          } else if (ssid) {
+            var json = new TextEncoder().encode(JSON.stringify({ wifi_ssid: ssid, wifi_password: pass }));
+            var blob = new Uint8Array(12 + json.length);
+            blob.set(MAGIC, 0);
+            new DataView(blob.buffer).setUint32(8, json.length, true);
+            blob.set(json, 12);
+            cfgUrl = URL.createObjectURL(new Blob([blob], { type: 'application/octet-stream' }));
+            parts.push({ path: cfgUrl, offset: USERCFG_OFFSET });
+            status.textContent = '✔ Wi-Fi "' + ssid + '" will be baked in';
+            status.className = 'baked';
+          } else {
+            status.textContent = 'No Wi-Fi: the dial will start its setup hotspot';
+            status.className = 'empty';
+          }
+
+          var manifest = {
+            name: 'UberSDR Dial',
+            version: VERSION,
+            new_install_prompt_erase: true,
+            new_install_improv_wait_time: 0,
+            builds: [{ chipFamily: 'ESP32-S3', parts: parts }],
+          };
+          manUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/json' }));
+          button.manifest = manUrl;
+        }
+
+        ['cfgSsid', 'cfgPass'].forEach(function (id) {
+          document.getElementById(id).addEventListener('input', rebuild);
+        });
+        document.getElementById('cfgShowPw').addEventListener('change', function (e) {
+          document.getElementById('cfgPass').type = e.target.checked ? 'text' : 'password';
+        });
+        rebuild();
+      })();
+    </script>
+  </body>
+</html>

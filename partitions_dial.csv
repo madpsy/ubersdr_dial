@@ -1,0 +1,13 @@
+# Partition table for the UberSDR Dial (16 MB flash).
+# Identical to the framework's default_16MB.csv except the coredump partition
+# is replaced by "usercfg": a raw 64 KB region the web flasher (docs/flash/)
+# writes Wi-Fi settings into (magic "UBSDRCF1", uint32 LE length, JSON). The
+# firmware imports it into NVS on first boot and erases it - see
+# import_flasher_config() in src/app/settings.cpp.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x640000,
+app1,     app,  ota_1,   0x650000,0x640000,
+spiffs,   data, spiffs,  0xc90000,0x360000,
+usercfg,  data, 0x40,    0xFF0000,0x10000,

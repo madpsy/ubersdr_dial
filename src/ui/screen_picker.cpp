@@ -16,29 +16,56 @@ static String short_loc(const String &loc) {
   return c > 0 ? loc.substring(0, c) : loc;
 }
 
+// Roller rows: the local receivers, then (only when there are both) a
+// divider row, then the internet list. The divider can't be selected.
+static int s_sep = -1;     // roller row of the divider, -1 = none
+static int s_last_row = 0;  // to step over the divider in the direction of travel
+
+static int row_to_index(int row) { return s_sep >= 0 && row > s_sep ? row - 1 : row; }
+static int index_to_row(int i) { return s_sep >= 0 && i >= s_sep ? i + 1 : i; }
+static int row_count() { return (int)instances_list().size() + (s_sep >= 0 ? 1 : 0); }
+
+static void select_row(int row, lv_anim_enable_t anim) {
+  int n = row_count();
+  row = row < 0 ? 0 : (row >= n ? n - 1 : row);
+  if (row == s_sep) row += row >= s_last_row ? 1 : -1;  // keep going the way we were
+  if (row < 0) row = s_sep + 1;
+  s_last_row = row;
+  if ((int)lv_roller_get_selected(s_roller) != row) lv_roller_set_selected(s_roller, row, anim);
+}
+
 static void update_detail() {
   const auto &list = instances_list();
-  uint32_t i = lv_roller_get_selected(s_roller);
+  uint32_t i = row_to_index(lv_roller_get_selected(s_roller));
   if (i >= list.size()) return;
   const Instance &in = list[i];
   String t = in.name + "\n" + in.location;
   lv_label_set_text(s_detail, t.c_str());
-  lv_label_set_text_fmt(s_avail, "%d/%d free   " LV_SYMBOL_BULLET "   SNR %d dB", in.available, in.max_clients,
-                        in.snr);
+  if (in.local)
+    lv_label_set_text_fmt(s_avail, "%d/%d free   " LV_SYMBOL_BULLET "   on this network", in.available,
+                          in.max_clients);
+  else
+    lv_label_set_text_fmt(s_avail, "%d/%d free   " LV_SYMBOL_BULLET "   SNR %d dB", in.available, in.max_clients,
+                          in.snr);
   lv_obj_set_style_text_color(s_avail, C(in.available > 0 ? COL_OK : COL_BAD), 0);
 }
 
 static void fill_list() {
   const auto &list = instances_list();
+  int nlocal = instances_local_count();
+  s_sep = nlocal > 0 && nlocal < (int)list.size() ? nlocal : -1;
   String opts;
   int sel = 0;
   for (size_t i = 0; i < list.size(); i++) {
     if (i) opts += "\n";
+    if ((int)i == s_sep) opts += "\xE2\x80\x94\xE2\x80\x94  INTERNET  \xE2\x80\x94\xE2\x80\x94\n";  // em dashes
+    if (list[i].local) opts += LV_SYMBOL_HOME "  ";
     opts += list[i].callsign + "  " + short_loc(list[i].location);
     if (list[i].url == g_settings.inst_url) sel = i;
   }
   lv_roller_set_options(s_roller, opts.c_str(), LV_ROLLER_MODE_NORMAL);
-  lv_roller_set_selected(s_roller, sel, LV_ANIM_OFF);
+  s_last_row = 0;
+  select_row(index_to_row(sel), LV_ANIM_OFF);
   lv_obj_remove_flag(s_roller, LV_OBJ_FLAG_HIDDEN);
   lv_obj_remove_flag(s_listen, LV_OBJ_FLAG_HIDDEN);
   lv_obj_remove_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
@@ -50,7 +77,7 @@ static void fill_list() {
 
 static void on_listen(lv_event_t *) {
   const auto &list = instances_list();
-  uint32_t i = lv_roller_get_selected(s_roller);
+  uint32_t i = row_to_index(lv_roller_get_selected(s_roller));
   if (i >= list.size()) return;
   g_settings.inst_url = list[i].url;
   g_settings.inst_call = list[i].callsign;
@@ -127,7 +154,13 @@ void picker_create() {
   const int top = 50;  // under the title
   lv_obj_set_height(s_roller, lv_obj_get_y(s_detail) - 6 - top);
   lv_obj_align(s_roller, LV_ALIGN_TOP_MID, 0, top);
-  lv_obj_add_event_cb(s_roller, [](lv_event_t *) { update_detail(); }, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(
+      s_roller,
+      [](lv_event_t *) {
+        select_row(lv_roller_get_selected(s_roller), LV_ANIM_ON);  // a swipe that lands on the divider
+        update_detail();
+      },
+      LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_update_layout(scr);
   Serial.printf("[picker] roller y %d..%d, detail %d..%d, avail %d..%d, listen %d..%d\n", (int)lv_obj_get_y(s_roller),
                 (int)lv_obj_get_y2(s_roller), (int)lv_obj_get_y(s_detail), (int)lv_obj_get_y2(s_detail),
@@ -181,10 +214,7 @@ void picker_tick(int knob) {
     }
   }
   if (knob && st == FetchState::Done) {
-    int n = instances_list().size();
-    int sel = (int)lv_roller_get_selected(s_roller) + knob;
-    sel = sel < 0 ? 0 : (sel >= n ? n - 1 : sel);
-    lv_roller_set_selected(s_roller, sel, LV_ANIM_ON);
+    select_row((int)lv_roller_get_selected(s_roller) + knob, LV_ANIM_ON);
     update_detail();
   }
 }
