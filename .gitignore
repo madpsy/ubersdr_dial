@@ -1,0 +1,5 @@
+# Build output
+.pio/
+.vscode/
+# The board's original 16 MB flash dump: vendor firmware, and may hold its saved settings
+firmware_backup/

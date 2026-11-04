@@ -1,0 +1,1158 @@
+// Radio screen: big frequency readout, live spectrum + waterfall, a dial ring
+// showing where you are in the receiver's range, and a knob-function chip.
+//
+//   knob        : tune / zoom / volume / squelch / bandwidth (chip shows which)
+//   tap chip    : cycle TUNE / ZOOM / VOL / SQL / BW     hold chip: menu
+//   tap mode    : next mode                              hold mode: mode picker
+//   tap volume  : mute / unmute
+//   tap/hold frequency: band picker
+//   tap spectrum: tune to that frequency
+//   tap callsign: back to the receiver list
+#include <math.h>
+
+#include "../app/audio.h"
+#include "../app/sdr.h"
+#include "../hw/led_ring.h"
+#include "../app/saver.h"
+#include "../app/settings.h"
+#include "../app/wifi_setup.h"
+#include "../hw/display.h"
+#include "../hw/haptic.h"
+#include "../hw/input.h"
+#include "battery_icon.h"
+#include "menu.h"
+#include "padlock.h"
+#include "rim.h"
+#include "theme.h"
+#include "ui.h"
+
+void ui_load(lv_obj_t *scr);
+
+static constexpr int LCD_SIZE = 360;
+static constexpr int CW = 280;      // canvas width
+static constexpr int CH = 150;      // canvas height
+static constexpr int SPEC_H = 58;   // spectrum trace area
+static constexpr int WF_Y = SPEC_H + 2;
+static constexpr int WF_H = CH - WF_Y;
+
+// Zoom ladder (Hz). 0 = receiver's full span.
+static const uint32_t kSpans[] = {0, 10000000, 5000000, 2000000, 1000000, 500000, 200000,
+                                  100000, 50000, 20000, 10000};
+static constexpr int kNumSpans = sizeof(kSpans) / sizeof(kSpans[0]);
+
+enum class KnobFn { Tune, Zoom, Volume, Squelch, Bandwidth };
+
+// Demodulator modes, default passbands and filter limits, as the v2 web UI
+// (static/v2/src/radio/constants.js MODES + bandwidthLimits). side: 'u' upper
+// sideband, 'l' lower, 'b' both (symmetric). max_w = widest filter in Hz.
+struct ModeDef { const char *id; const char *label; int lo, hi; char side; int max_w; };
+static const ModeDef kModes[] = {
+    {"lsb", "LSB", -2700, -50, 'l', 5950},   {"usb", "USB", 50, 2700, 'u', 5950},
+    {"cwl", "CW-L", -200, 200, 'b', 1000},   {"cwu", "CW-U", -200, 200, 'b', 1000},
+    {"am", "AM", -5000, 5000, 'b', 12000},   {"sam", "SAM", -5000, 5000, 'b', 12000},
+    {"nfm", "NFM", -5000, 5000, 'b', 12000}, {"fm", "FM", -8000, 8000, 'b', 16000},
+};
+static constexpr int kNumModes = sizeof(kModes) / sizeof(kModes[0]);
+static_assert(kNumModes <= 8, "Settings::bw_hz holds 8 modes");
+static constexpr int BW_MIN = 100;
+static constexpr int SQL_OFF = -11, SQL_MIN = -10, SQL_MAX = 46;  // v2 slider range
+
+static lv_obj_t *s_scr, *s_freq, *s_info, *s_call, *s_dot, *s_canvas, *s_chip, *s_chip_lbl, *s_ring,
+    *s_lo, *s_hi, *s_status, *s_pb, *s_snr, *s_mode_btn, *s_mode_lbl, *s_vol_btn, *s_vol_lbl;
+static lv_draw_buf_t *s_buf;
+static uint16_t s_pal[256];      // waterfall palette (RGB565)
+static uint16_t s_fill[SPEC_H];  // spectrum fill gradient per row
+static KnobFn s_fn = KnobFn::Tune;
+// s_tune is the receive frequency; s_center is the middle of the spectrum view.
+// The view follows the tuned frequency as far as the receiver's range allows
+// (at full span it can't move, but you can still tune anywhere in it).
+static uint32_t s_tune, s_center, s_span;
+static lv_obj_t *s_marker, *s_recenter, *s_lock, *s_bat;
+// Tuning lock, as v2's padlock: frequency and mode stay put; zoom, pan,
+// volume, squelch and bandwidth still work.
+static bool locked() { return g_settings.tune_locked; }
+static bool s_follow = true;      // view tracks the tuned frequency
+static uint32_t s_wf_span = 0;    // span the waterfall history was drawn at
+static double s_wf_shift_acc = 0; // sub-pixel pan remainder
+static void shift_waterfall(int cols);
+static int band_of(uint32_t hz);
+static void update_chip();
+static uint32_t s_band_mem[11];  // last frequency per band (kBands order)
+static int s_zoom_idx;
+static float s_floor_db = -120;
+static uint32_t s_view_changed_at = 0;
+static bool s_saved = true;
+static SdrState s_last_state = SdrState::Idle;
+static uint32_t s_audio_gen = 0;
+static int s_accel = 1;  // current knob acceleration multiplier (shown on screen)
+
+// Rim ring: shows what the knob controls. TUNE -> SNR meter (gradient),
+// ZOOM -> zoom level, VOL -> volume.
+static constexpr int RING = 352;
+static constexpr float SNR_MIN = -5, SNR_MAX = 30;  // same scale as the clients/LED ring
+static lv_draw_buf_t *s_grad;  // conic SNR gradient used as the arc's texture
+static float s_ring_snr = SNR_MIN;
+static int s_ring_val = -1;
+static void ring_mode();
+static lv_obj_t *s_sq_mark;  // squelch threshold marker on the rim
+static int s_gate_shown = -1;  // last open/closed state drawn (-1 = redraw)
+
+// Place the squelch threshold marker on the rim arc, on whichever scale the
+// ring is showing: SQL mode (-11..46 dB) or the TUNE SNR meter (-5..30 dB,
+// only when a squelch is set).
+static void place_sq_mark() {
+  if (!s_sq_mark) return;
+  bool sql = s_fn == KnobFn::Squelch;
+  bool tune = s_fn == KnobFn::Tune && g_settings.squelch_db >= SQL_MIN;
+  if (!sql && !tune) {
+    lv_obj_add_flag(s_sq_mark, LV_OBJ_FLAG_HIDDEN);
+    if (s_ring) lv_obj_set_style_arc_opa(s_ring, LV_OPA_COVER, LV_PART_INDICATOR);
+    return;
+  }
+  lv_obj_remove_flag(s_sq_mark, LV_OBJ_FLAG_HIDDEN);
+  float frac;
+  if (sql) {
+    int v = g_settings.squelch_db < SQL_MIN ? SQL_OFF : g_settings.squelch_db;
+    frac = (v - SQL_OFF) / (float)(SQL_MAX - SQL_OFF);
+  } else {
+    frac = (g_settings.squelch_db - SNR_MIN) / (SNR_MAX - SNR_MIN);
+  }
+  frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+  float a = 135.0f + 270.0f * frac;
+  lv_arc_set_angles(s_sq_mark, (int)a - 2, (int)a + 2);
+}
+
+static int cur_mode_idx() {
+  const String &m = g_settings.mode;
+  for (int i = 0; i < kNumModes; i++)
+    if (m == kModes[i].id) return i;
+  return s_tune < 10000000 ? 0 : 1;  // auto: LSB below 10 MHz, USB above
+}
+static const ModeDef &cur_mode() { return kModes[cur_mode_idx()]; }
+
+static int default_width(const ModeDef &m) { return m.hi - m.lo; }
+static int cur_width() {
+  int w = g_settings.bw_hz[cur_mode_idx()];
+  return w ? w : default_width(cur_mode());
+}
+// Passband edges for the current mode at the chosen filter width.
+static void cur_edges(int *lo, int *hi) {
+  const ModeDef &m = cur_mode();
+  int w = cur_width();
+  if (m.side == 'u') {
+    *lo = m.lo;
+    *hi = m.lo + w;
+  } else if (m.side == 'l') {
+    *hi = m.hi;
+    *lo = m.hi - w;
+  } else {
+    *lo = -w / 2;
+    *hi = w / 2;
+  }
+}
+static int bw_step() { return cur_mode().max_w > 6000 ? 500 : 50; }
+
+static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
+static void build_palettes() {
+  // black -> deep blue -> cyan -> yellow -> red -> white
+  struct Stop { float p; uint8_t r, g, b; };
+  static const Stop st[] = {{0, 2, 4, 10},     {0.25f, 10, 30, 110}, {0.5f, 20, 190, 230},
+                            {0.7f, 250, 220, 60}, {0.88f, 240, 70, 40}, {1, 255, 255, 255}};
+  for (int i = 0; i < 256; i++) {
+    float p = i / 255.0f;
+    int k = 0;
+    while (k < 4 && p > st[k + 1].p) k++;
+    float t = (p - st[k].p) / (st[k + 1].p - st[k].p);
+    s_pal[i] = rgb565(st[k].r + t * (st[k + 1].r - st[k].r), st[k].g + t * (st[k + 1].g - st[k].g),
+                      st[k].b + t * (st[k + 1].b - st[k].b));
+  }
+  for (int y = 0; y < SPEC_H; y++) {
+    float t = (float)y / SPEC_H;  // 0 top .. 1 bottom
+    s_fill[y] = rgb565(10 + 20 * (1 - t), 90 + 110 * (1 - t), 140 + 90 * (1 - t));
+  }
+}
+
+static uint32_t max_hz() {
+  uint32_t m = sdr_max_hz();
+  return m ? m : 30000000;
+}
+
+static uint32_t span_for(int idx) {
+  uint32_t full = max_hz();
+  uint32_t s = kSpans[idx] ? kSpans[idx] : full;
+  return s > full ? full : s;
+}
+
+// Step: the user's fixed choice, or a "nice" 1/2/5 value around span/100.
+static uint32_t tune_step() {
+  if (g_settings.step_hz) return g_settings.step_hz;
+  uint32_t raw = s_span / 100;
+  uint32_t p = 1;
+  while (p * 10 <= raw) p *= 10;
+  if (raw >= 5 * p) return 5 * p;
+  if (raw >= 2 * p) return 2 * p;
+  return p < 10 ? 10 : p;
+}
+
+static void fmt_freq(char *out, size_t n, uint32_t hz) {
+  snprintf(out, n, "%u.%03u.%03u", (unsigned)(hz / 1000000), (unsigned)(hz / 1000 % 1000), (unsigned)(hz % 1000));
+}
+
+static void fmt_hz(char *out, size_t n, uint32_t hz) {
+  if (hz >= 1000000) snprintf(out, n, "%g MHz", hz / 1e6);
+  else if (hz >= 1000) snprintf(out, n, "%g kHz", hz / 1e3);
+  else snprintf(out, n, "%u Hz", (unsigned)hz);
+}
+
+static void clamp_view() {
+  uint32_t mx = max_hz();
+  uint32_t half = s_span / 2;
+  if (s_center < half) s_center = half;
+  if (s_center > mx - half) s_center = mx - half;
+}
+
+static void refresh_labels() {
+  char f[24], a[24], b[24];
+  fmt_freq(f, sizeof(f), s_tune);
+  lv_label_set_text(s_freq, f);
+  fmt_hz(a, sizeof(a), s_span);
+  fmt_hz(b, sizeof(b), tune_step() * s_accel);
+  lv_label_set_text_fmt(s_info, "SPAN %s   " LV_SYMBOL_BULLET "   STEP %s%s%s%s", a, b,
+                        g_settings.step_hz ? "" : " auto", s_accel > 1 ? "  " LV_SYMBOL_CHARGE : "",
+                        locked() ? "   LOCKED" : "");
+  // While accelerating, the step readout lights up so it's obvious why the
+  // frequency is moving faster.
+  lv_obj_set_style_text_color(s_info, C(s_accel > 1 ? COL_ACCENT : COL_DIM), 0);
+  snprintf(a, sizeof(a), "%.3f", (s_center - s_span / 2) / 1e6);
+  snprintf(b, sizeof(b), "%.3f", (s_center + s_span / 2) / 1e6);
+  lv_label_set_text(s_lo, a);
+  lv_label_set_text(s_hi, b);
+}
+
+// Pixel column of a frequency within the current view.
+static int freq_x(int64_t hz) {
+  return (int)((hz - ((int64_t)s_center - (int64_t)s_span / 2)) * CW / (int64_t)s_span);
+}
+
+static void show(lv_obj_t *o, bool on) {
+  if (on) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_passband() {
+  const ModeDef &m = cur_mode();
+  int lo, hi;
+  cur_edges(&lo, &hi);
+  int xt = freq_x(s_tune);
+  int x0 = freq_x((int64_t)s_tune + lo);
+  int x1 = freq_x((int64_t)s_tune + hi);
+  if (x1 - x0 < 2) x1 = x0 + 2;
+  // Clip to the canvas: when panned away the marker/passband can be off-screen.
+  int c0 = x0 < 0 ? 0 : x0, c1 = x1 > CW ? CW : x1;
+  show(s_pb, c1 > c0);
+  if (c1 > c0) {
+    lv_obj_set_size(s_pb, c1 - c0, CH);
+    lv_obj_align(s_pb, LV_ALIGN_TOP_LEFT, (360 - CW) / 2 + c0, 114);
+  }
+  show(s_marker, xt >= 0 && xt < CW);
+  lv_obj_align(s_marker, LV_ALIGN_TOP_LEFT, (360 - CW) / 2 + xt - 1, 114);
+  // Recentre button whenever the view isn't tracking the tuned frequency.
+  show(s_recenter, !s_follow);
+  lv_label_set_text(s_mode_lbl, m.label);
+}
+
+static void update_volume() {
+  lv_label_set_text_fmt(s_vol_lbl, "%s %d", g_settings.muted ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX,
+                        g_settings.volume);
+  lv_obj_set_style_text_color(s_vol_lbl, C(g_settings.muted ? COL_BAD : COL_TEXT), 0);
+  audio_set_volume(g_settings.volume, g_settings.muted);
+  if (s_ring && s_fn == KnobFn::Volume) ring_mode();
+}
+
+// Move the view, keeping the waterfall history aligned with it.
+static void apply_view(uint32_t center) {
+  uint32_t old = s_center;
+  s_center = center;
+  clamp_view();
+  if (s_buf && s_span == s_wf_span) {
+    s_wf_shift_acc += ((double)old - (double)s_center) * CW / s_span;
+    int cols = (int)s_wf_shift_acc;
+    if (cols) {
+      shift_waterfall(cols);
+      s_wf_shift_acc -= cols;
+    }
+  } else {
+    s_wf_shift_acc = 0;
+  }
+  s_wf_span = s_span;
+  sdr_set_view(s_center, s_span);
+}
+
+static void view_changed() {
+  uint32_t mx = max_hz();
+  if (s_tune > mx) s_tune = mx;
+  // Panned away? Keep the view unless the tuned frequency has left it.
+  if (!s_follow) {
+    int xt = freq_x(s_tune);
+    if (xt < 0 || xt >= CW) s_follow = true;
+  }
+  apply_view(s_follow ? s_tune : s_center);
+  int bi = band_of(s_tune);
+  if (bi >= 0) s_band_mem[bi] = s_tune;
+  int lo, hi;
+  cur_edges(&lo, &hi);
+  audio_tune(s_tune, cur_mode().id, lo, hi);
+  update_passband();
+  refresh_labels();
+  s_view_changed_at = millis();
+  s_saved = false;
+}
+
+// Conic SNR gradient for the rim arc: shared with the controller screen.
+static void build_ring_gradient() { s_grad = rim_gradient(); }
+
+static void set_ring_value(int v) {
+  if (v == s_ring_val) return;
+  s_ring_val = v;
+  lv_arc_set_value(s_ring, v);
+}
+
+// Configure the ring for the knob's current function.
+static void ring_mode() {
+  s_ring_val = -1;
+  if (s_fn == KnobFn::Tune) {
+    lv_arc_set_range(s_ring, (int)(SNR_MIN * 10), (int)(SNR_MAX * 10));
+    lv_obj_set_style_arc_image_src(s_ring, s_grad, LV_PART_INDICATOR);
+    set_ring_value((int)(s_ring_snr * 10));
+  } else {
+    lv_obj_set_style_arc_image_src(s_ring, nullptr, LV_PART_INDICATOR);
+    if (s_fn == KnobFn::Zoom) {
+      lv_arc_set_range(s_ring, 0, kNumSpans - 1);
+      set_ring_value(s_zoom_idx);
+    } else if (s_fn == KnobFn::Squelch) {
+      // Ring = live SNR (as v2's squelch slider shows it), marker = threshold.
+      lv_arc_set_range(s_ring, SQL_OFF, SQL_MAX);
+      set_ring_value(SQL_OFF);
+    } else if (s_fn == KnobFn::Bandwidth) {
+      lv_arc_set_range(s_ring, BW_MIN, cur_mode().max_w);
+      set_ring_value(cur_width());
+    } else {
+      lv_arc_set_range(s_ring, 0, 100);
+      set_ring_value(g_settings.muted ? 0 : g_settings.volume);
+    }
+  }
+}
+
+static constexpr uint32_t COL_BW = 0xf472b6;  // pink: bandwidth
+
+static uint32_t fn_colour(KnobFn fn) {
+  switch (fn) {
+    case KnobFn::Tune: return COL_ACCENT;
+    case KnobFn::Zoom: return COL_ACCENT2;
+    case KnobFn::Volume: return COL_OK;
+    case KnobFn::Squelch: return COL_WARN;
+    default: return COL_BW;
+  }
+}
+
+// Chip text shows the function and, for value functions, the live value.
+static void update_chip() {
+  char v[32];
+  switch (s_fn) {
+    case KnobFn::Tune: lv_label_set_text(s_chip_lbl, LV_SYMBOL_SHUFFLE "  TUNE"); break;
+    case KnobFn::Zoom: lv_label_set_text(s_chip_lbl, LV_SYMBOL_PLUS "  ZOOM"); break;
+    case KnobFn::Volume:
+      lv_label_set_text_fmt(s_chip_lbl, LV_SYMBOL_VOLUME_MAX "  %d", g_settings.muted ? 0 : g_settings.volume);
+      break;
+    case KnobFn::Squelch:
+      if (g_settings.squelch_db < SQL_MIN) lv_label_set_text(s_chip_lbl, "SQL  off");
+      else lv_label_set_text_fmt(s_chip_lbl, "SQL  %d dB", g_settings.squelch_db);
+      break;
+    case KnobFn::Bandwidth: {
+      int w = cur_width();
+      if (w >= 1000) snprintf(v, sizeof(v), "BW  %d.%02dk", w / 1000, (w % 1000) / 10);
+      else snprintf(v, sizeof(v), "BW  %d", w);
+      lv_label_set_text(s_chip_lbl, v);
+      break;
+    }
+  }
+}
+
+static void set_fn(KnobFn fn) {
+  s_fn = fn;
+  uint32_t col = fn_colour(fn);
+  update_chip();
+  lv_obj_set_style_text_color(s_chip_lbl, C(col), 0);
+  lv_obj_set_style_border_color(s_chip, C(col), 0);
+  lv_obj_set_style_bg_color(s_chip, C(col), 0);
+  lv_obj_set_style_arc_color(s_ring, C(col), LV_PART_INDICATOR);
+  ring_mode();
+  place_sq_mark();
+  s_gate_shown = -1;  // redraw open/closed styling for the new function
+}
+
+// ---------------------------------------------------------------- drawing
+static void clear_canvas() {
+  uint8_t *d = (uint8_t *)s_buf->data;
+  uint32_t stride = s_buf->header.stride;
+  uint16_t bg = rgb565(6, 10, 20);
+  for (int y = 0; y < CH; y++) {
+    uint16_t *row = (uint16_t *)(d + y * stride);
+    for (int x = 0; x < CW; x++) row[x] = y < SPEC_H ? bg : (y < WF_Y ? rgb565(28, 39, 64) : 0);
+  }
+}
+
+static void draw_frame(const SpectrumFrame &f) {
+  if (!f.bins || f.bin_bw_hz <= 0) return;
+  // Map each column of the *requested* view onto the frame's bins, so tuning
+  // feels immediate even before the server has re-centred.
+  double frame_lo = (double)f.center_hz - f.bins * f.bin_bw_hz / 2;
+  double view_lo = (double)s_center - s_span / 2.0;
+  double hz_per_col = (double)s_span / CW;
+  static uint8_t col[CW];
+  static bool valid[CW];
+  uint32_t hist[256] = {0};
+  for (int x = 0; x < CW; x++) {
+    double b0 = (view_lo + x * hz_per_col - frame_lo) / f.bin_bw_hz;
+    double b1 = (view_lo + (x + 1) * hz_per_col - frame_lo) / f.bin_bw_hz;
+    int i0 = (int)floor(b0), i1 = (int)ceil(b1);
+    if (i1 <= i0) i1 = i0 + 1;
+    if (i1 <= 0 || i0 >= f.bins) {
+      valid[x] = false;
+      continue;
+    }
+    if (i0 < 0) i0 = 0;
+    if (i1 > f.bins) i1 = f.bins;
+    uint8_t m = 0;
+    for (int i = i0; i < i1; i++) m = f.codes[i] > m ? f.codes[i] : m;
+    col[x] = m;
+    valid[x] = true;
+    hist[m]++;
+  }
+  // Noise floor = 20th percentile of the visible columns, smoothed.
+  uint32_t total = 0, acc = 0;
+  for (int i = 0; i < 256; i++) total += hist[i];
+  if (!total) return;
+  int pc = 0;
+  for (; pc < 256; pc++) {
+    acc += hist[pc];
+    if (acc * 5 >= total) break;
+  }
+  float floor_now = f.ref_db + pc * f.step_db;
+  s_floor_db = s_floor_db < -150 || fabsf(floor_now - s_floor_db) > 20 ? floor_now
+                                                                       : s_floor_db * 0.9f + floor_now * 0.1f;
+  const float spec_lo = s_floor_db - 6, spec_range = 60;   // trace scale
+  const float wf_lo = s_floor_db - 3, wf_range = 45;       // waterfall scale
+
+  uint8_t *d = (uint8_t *)s_buf->data;
+  uint32_t stride = s_buf->header.stride;
+
+  // Scroll the waterfall down one row and paint the new top row.
+  memmove(d + (WF_Y + 1) * stride, d + WF_Y * stride, (WF_H - 1) * stride);
+  uint16_t *wrow = (uint16_t *)(d + WF_Y * stride);
+  for (int x = 0; x < CW; x++) {
+    if (!valid[x]) {
+      wrow[x] = 0;
+      continue;
+    }
+    float db = f.ref_db + col[x] * f.step_db;
+    int v = (int)((db - wf_lo) / wf_range * 255);
+    wrow[x] = s_pal[v < 0 ? 0 : (v > 255 ? 255 : v)];
+  }
+
+  // Spectrum trace with gradient fill and a faint 10 dB grid.
+  uint16_t bg = rgb565(6, 10, 20), grid = rgb565(18, 26, 44), line = rgb565(200, 250, 255);
+  for (int y = 0; y < SPEC_H; y++) {
+    uint16_t *row = (uint16_t *)(d + y * stride);
+    uint16_t c = (y % (SPEC_H / 6) == 0) ? grid : bg;
+    for (int x = 0; x < CW; x++) row[x] = c;
+  }
+  for (int x = 0; x < CW; x += CW / 8) {
+    for (int y = 0; y < SPEC_H; y++) ((uint16_t *)(d + y * stride))[x] = grid;
+  }
+  int prev_y = -1;
+  for (int x = 0; x < CW; x++) {
+    if (!valid[x]) {
+      prev_y = -1;
+      continue;
+    }
+    float db = f.ref_db + col[x] * f.step_db;
+    int h = (int)((db - spec_lo) / spec_range * SPEC_H);
+    h = h < 1 ? 1 : (h > SPEC_H ? SPEC_H : h);
+    int y = SPEC_H - h;
+    for (int yy = y + 1; yy < SPEC_H; yy++) ((uint16_t *)(d + yy * stride))[x] = s_fill[yy];
+    // Join to the previous column so peaks read as a continuous line.
+    int ya = prev_y < 0 ? y : (prev_y < y ? prev_y : y);
+    int yb = prev_y < 0 ? y : (prev_y > y ? prev_y : y);
+    for (int yy = ya; yy <= yb; yy++) ((uint16_t *)(d + yy * stride))[x] = line;
+    prev_y = y;
+  }
+  lv_obj_invalidate(s_canvas);
+}
+
+// ---------------------------------------------------------------- events
+static void shift_waterfall(int cols) {
+  if (!s_buf || !cols) return;
+  uint8_t *d = (uint8_t *)s_buf->data;
+  uint32_t stride = s_buf->header.stride;
+  int n = cols > 0 ? cols : -cols;
+  if (n >= CW) n = CW;
+  for (int y = WF_Y; y < CH; y++) {
+    uint16_t *row = (uint16_t *)(d + y * stride);
+    if (cols > 0) {  // content moves right
+      memmove(row + n, row, (CW - n) * 2);
+      memset(row, 0, n * 2);
+    } else {
+      memmove(row, row + n, (CW - n) * 2);
+      memset(row + CW - n, 0, n * 2);
+    }
+  }
+  lv_obj_invalidate(s_canvas);
+}
+
+// Drag to pan (tuning stays put), tap to tune.
+static int s_drag_x0;
+static uint32_t s_drag_center0;
+static bool s_dragging;
+
+static void on_canvas_press(lv_event_t *e) {
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  s_drag_x0 = p.x;
+  s_drag_center0 = s_center;
+  s_dragging = false;
+}
+
+static void on_canvas_pressing(lv_event_t *e) {
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  int dx = p.x - s_drag_x0;
+  if (!s_dragging && (dx > 6 || dx < -6)) s_dragging = true;
+  if (!s_dragging) return;
+  s_follow = false;
+  int64_t c = (int64_t)s_drag_center0 - (int64_t)dx * s_span / CW;
+  apply_view(c < 0 ? 0 : (uint32_t)c);
+  update_passband();
+  refresh_labels();
+}
+
+static void on_canvas_click(lv_event_t *e) {
+  if (s_dragging) return;  // that was a pan, not a tap
+  if (locked()) return;
+  lv_point_t p;
+  lv_indev_get_point(lv_indev_active(), &p);
+  lv_area_t a;
+  lv_obj_get_coords(s_canvas, &a);
+  int x = p.x - a.x1;
+  if (x < 0 || x >= CW) return;
+  int64_t f = (int64_t)s_center - s_span / 2 + (int64_t)s_span * x / CW;
+  uint32_t step = tune_step();
+  if (f < 0) f = 0;
+  s_tune = (uint32_t)((f + step / 2) / step * step);
+  view_changed();
+}
+
+// ---------------------------------------------------------------- overlays
+// Full-screen pickers drawn over the radio screen (which keeps running).
+static lv_obj_t *s_overlay;
+
+static void close_overlay() {
+  if (s_overlay) lv_obj_delete(s_overlay);
+  s_overlay = nullptr;
+  if (s_canvas) lv_obj_invalidate(s_scr);  // repaint the radio screen once
+}
+
+static lv_obj_t *open_overlay(const char *title) {
+  close_overlay();
+  s_overlay = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(s_overlay);
+  lv_obj_set_size(s_overlay, LCD_SIZE, LCD_SIZE);
+  lv_obj_center(s_overlay);
+  lv_obj_set_style_bg_color(s_overlay, C(COL_BG), 0);
+  // Fully opaque so LVGL doesn't redraw (and blend) the radio screen underneath.
+  lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind it
+  lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *t = theme_label(s_overlay, &lv_font_montserrat_14, COL_DIM, title);
+  lv_obj_align(t, LV_ALIGN_CENTER, 0, -14);
+  // Close button in the middle
+  lv_obj_t *x = lv_button_create(s_overlay);
+  lv_obj_set_size(x, 44, 44);
+  lv_obj_set_style_radius(x, 22, 0);
+  lv_obj_set_style_bg_color(x, C(COL_PANEL), 0);
+  lv_obj_set_style_border_color(x, C(COL_EDGE), 0);
+  lv_obj_set_style_border_width(x, 2, 0);
+  lv_obj_set_style_shadow_width(x, 0, 0);
+  lv_obj_t *xl = theme_label(x, &lv_font_montserrat_16, COL_DIM, LV_SYMBOL_CLOSE);
+  lv_obj_center(xl);
+  lv_obj_align(x, LV_ALIGN_CENTER, 0, 22);
+  lv_obj_add_event_cb(x, [](lv_event_t *) { close_overlay(); }, LV_EVENT_CLICKED, nullptr);
+  return s_overlay;
+}
+
+// Round button placed on a circle around the centre.
+static lv_obj_t *ring_button(lv_obj_t *parent, int i, int n, int radius, int size, const char *txt, bool active,
+                             uint32_t col) {
+  float a = (-90.0f + 360.0f * i / n) * (float)M_PI / 180.0f;
+  lv_obj_t *b = lv_button_create(parent);
+  lv_obj_set_size(b, size, size);
+  lv_obj_set_style_radius(b, size / 2, 0);
+  lv_obj_set_style_shadow_width(b, 0, 0);
+  lv_obj_set_style_border_width(b, 2, 0);
+  lv_obj_set_style_border_color(b, C(col), 0);
+  lv_obj_set_style_bg_color(b, C(col), 0);
+  lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_10, 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_50, LV_STATE_PRESSED);
+  lv_obj_t *l = theme_label(b, &lv_font_montserrat_14, active ? COL_BG : COL_TEXT, txt);
+  lv_obj_center(l);
+  lv_obj_align(b, LV_ALIGN_CENTER, (int)(radius * cosf(a)), (int)(radius * sinf(a)));
+  return b;
+}
+
+static void set_mode(int idx) {
+  if (locked()) return;
+  g_settings.mode = kModes[idx].id;
+  if (s_fn == KnobFn::Bandwidth) ring_mode();
+  update_chip();
+  view_changed();
+}
+
+static void open_mode_picker() {
+  lv_obj_t *o = open_overlay("MODE");
+  int cur = cur_mode_idx();
+  for (int i = 0; i < kNumModes; i++) {
+    lv_obj_t *b = ring_button(o, i, kNumModes, 124, 68, kModes[i].label, i == cur, COL_ACCENT);
+    lv_obj_add_event_cb(
+        b,
+        [](lv_event_t *e) {
+          set_mode((int)(intptr_t)lv_event_get_user_data(e));
+          close_overlay();
+        },
+        LV_EVENT_CLICKED, (void *)(intptr_t)i);
+  }
+}
+
+// Ham bands, as v2 (static/v2/src/lib/bands.js), with a starting frequency
+// for the first visit; afterwards each band remembers where you were.
+struct BandDef { const char *name; uint32_t lo, hi, start; };
+static const BandDef kBands[] = {
+    {"160m", 1810000, 2000000, 1840000},    {"80m", 3500000, 4000000, 3700000},
+    {"60m", 5250000, 5450000, 5357000},     {"40m", 7000000, 7300000, 7150000},
+    {"30m", 10100000, 10150000, 10136000},  {"20m", 14000000, 14350000, 14200000},
+    {"17m", 18068000, 18168000, 18130000},  {"15m", 21000000, 21450000, 21250000},
+    {"12m", 24890000, 24990000, 24950000},  {"10m", 28000000, 29700000, 28500000},
+    {"6m", 50000000, 52000000, 50150000},
+};
+static constexpr int kNumBands = sizeof(kBands) / sizeof(kBands[0]);
+static_assert(kNumBands == sizeof(s_band_mem) / sizeof(s_band_mem[0]), "band memory size");
+
+static int band_of(uint32_t hz) {
+  for (int i = 0; i < kNumBands; i++)
+    if (hz >= kBands[i].lo && hz <= kBands[i].hi) return i;
+  return -1;
+}
+
+static void go_band(int i) {
+  if (locked()) return;
+  const BandDef &b = kBands[i];
+  s_tune = s_band_mem[i] ? s_band_mem[i] : b.start;
+  // Zoom so the whole band fits (smallest ladder span that covers it).
+  uint32_t need = (b.hi - b.lo) * 23 / 20;
+  int z = 0;
+  for (int k = 0; k < kNumSpans; k++)
+    if (span_for(k) >= need) z = k;
+  s_zoom_idx = z;
+  s_span = span_for(z);
+  s_follow = true;
+  if (s_fn == KnobFn::Zoom) ring_mode();
+  view_changed();
+}
+
+static void open_band_picker() {
+  lv_obj_t *o = open_overlay("BAND");
+  int cur = band_of(s_tune);
+  // Only bands the receiver fully covers (as v2's bandsInRange).
+  int idx[kNumBands], n = 0;
+  for (int i = 0; i < kNumBands; i++)
+    if (kBands[i].hi <= max_hz()) idx[n++] = i;
+  for (int k = 0; k < n; k++) {
+    lv_obj_t *b = ring_button(o, k, n, 128, 58, kBands[idx[k]].name, idx[k] == cur, COL_ACCENT2);
+    lv_obj_add_event_cb(
+        b,
+        [](lv_event_t *e) {
+          go_band((int)(intptr_t)lv_event_get_user_data(e));
+          close_overlay();
+        },
+        LV_EVENT_CLICKED, (void *)(intptr_t)idx[k]);
+  }
+}
+
+// Menu: everything that doesn't need to be one touch away (see menu.cpp: each
+// setting opens its own sheet of choices).
+static const MenuChoice kStepChoices[] = {{"Auto", 0},      {"10 Hz", 10},   {"50 Hz", 50},
+                                          {"100 Hz", 100},  {"500 Hz", 500}, {"1 kHz", 1000},
+                                          {"5 kHz", 5000},  {"9 kHz", 9000}, {"10 kHz", 10000}};
+static const MenuChoice kBrightChoices[] = {{"20%", 20}, {"40%", 40}, {"60%", 60}, {"80%", 80}, {"100%", 100}};
+static const MenuChoice kOnOff[] = {{"On", 1}, {"Off", 0}};
+static const MenuChoice kSaverChoices[] = {
+    {"Dim", SAVER_DIM}, {"Screen off", SAVER_OFF}, {"Spectrum off", SAVER_SPECTRUM}, {"Never", SAVER_NEVER}};
+static const MenuChoice kSaverTimes[] = {{"30 s", 30}, {"1 min", 60}, {"2 min", 120}, {"5 min", 300}, {"10 min", 600}};
+
+static const MenuItem kRadioMenu[] = {
+    {LV_SYMBOL_SHUFFLE, "Tuning step", [] { return (int)g_settings.step_hz; },
+     [](int v) {
+       g_settings.step_hz = v;
+       s_saved = false;
+       s_view_changed_at = millis();
+       refresh_labels();
+     },
+     kStepChoices, 9},
+    {LV_SYMBOL_EYE_OPEN, "Brightness", [] { return (int)g_settings.brightness; },
+     [](int v) {
+       g_settings.brightness = v;
+       display_set_brightness(v);
+       settings_save();
+     },
+     kBrightChoices, 5},
+    {LV_SYMBOL_BELL, "Haptics", [] { return (int)g_settings.haptics; },
+     [](int v) {
+       g_settings.haptics = v;
+       haptic_enable(v);
+       settings_save();
+     },
+     kOnOff, 2, [] { return haptic_present(); }},
+    {LV_SYMBOL_EYE_CLOSE, "Screen saver", [] { return (int)g_settings.saver_mode; },
+     [](int v) {
+       g_settings.saver_mode = v;
+       settings_save();
+     },
+     kSaverChoices, 4},
+    {LV_SYMBOL_LOOP, "Saver after", [] { return (int)g_settings.saver_secs; },
+     [](int v) {
+       g_settings.saver_secs = v;
+       settings_save();
+     },
+     kSaverTimes, 5, [] { return g_settings.saver_mode != SAVER_NEVER; }},
+    {LV_SYMBOL_MUTE, "Turn squelch off", nullptr,
+     [](int) {
+       g_settings.squelch_db = -999;
+       audio_set_squelch(-999);
+       place_sq_mark();
+       update_chip();
+       s_saved = false;
+       menu_close();
+     },
+     nullptr, 0, [] { return g_settings.squelch_db >= SQL_MIN; }},
+    {LV_SYMBOL_REFRESH, "Reset bandwidth", nullptr,
+     [](int) {
+       g_settings.bw_hz[cur_mode_idx()] = 0;
+       if (s_fn == KnobFn::Bandwidth) ring_mode();
+       update_chip();
+       view_changed();
+       menu_close();
+     },
+     nullptr, 0},
+    {LV_SYMBOL_LIST, "Bands", nullptr, [](int) { open_band_picker(); }, nullptr, 0},
+    {LV_SYMBOL_AUDIO, "Modes", nullptr, [](int) { open_mode_picker(); }, nullptr, 0},
+    {LV_SYMBOL_HOME, "Receivers", nullptr,
+     [](int) {
+       menu_close();
+       ui_show_picker();
+     },
+     nullptr, 0},
+    {LV_SYMBOL_WIFI, "Wi-Fi setup", nullptr,
+     [](int) {
+       menu_close();
+       wifi_setup_start();
+       ui_show_setup("");
+     },
+     nullptr, 0},
+};
+
+static void open_menu() {
+  menu_open(s_scr, "M E N U", COL_ACCENT, kRadioMenu, sizeof(kRadioMenu) / sizeof(kRadioMenu[0]), &s_overlay);
+}
+
+static lv_obj_t *mk_label(const lv_font_t *font, uint32_t col, const char *txt) {
+  return theme_label(s_scr, font, col, txt);
+}
+
+void radio_create() {
+  build_palettes();
+  s_overlay = nullptr;
+  s_sq_mark = nullptr;
+  s_scr = theme_screen();
+  s_tune = s_center = g_settings.freq_hz;
+  s_follow = true;
+  s_wf_span = 0;
+  s_wf_shift_acc = 0;
+  s_span = g_settings.span_hz;
+  s_zoom_idx = 0;
+  int best = 0;
+  for (int i = 0; i < kNumSpans; i++)
+    if (kSpans[i] && labs((long)kSpans[i] - (long)s_span) < labs((long)kSpans[best] - (long)s_span)) best = i;
+  s_zoom_idx = best;
+  s_span = span_for(s_zoom_idx);
+
+  // Rim ring (see ring_mode)
+  build_ring_gradient();
+  s_ring = lv_arc_create(s_scr);
+  lv_obj_set_size(s_ring, 352, 352);
+  lv_obj_center(s_ring);
+  lv_arc_set_rotation(s_ring, 135);
+  lv_arc_set_bg_angles(s_ring, 0, 270);
+  lv_arc_set_range(s_ring, 0, 1000);
+  lv_obj_remove_style(s_ring, nullptr, LV_PART_KNOB);
+  lv_obj_remove_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(s_ring, 7, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(s_ring, C(COL_EDGE), LV_PART_MAIN);
+  lv_obj_set_style_arc_width(s_ring, 7, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(s_ring, true, LV_PART_MAIN);
+  lv_obj_set_style_arc_rounded(s_ring, true, LV_PART_INDICATOR);
+
+  // Squelch threshold marker: a short, thicker amber tick over the rim.
+  s_sq_mark = lv_arc_create(s_scr);
+  lv_obj_set_size(s_sq_mark, 352, 352);
+  lv_obj_center(s_sq_mark);
+  lv_obj_remove_style(s_sq_mark, nullptr, LV_PART_KNOB);
+  lv_obj_remove_flag(s_sq_mark, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_opa(s_sq_mark, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(s_sq_mark, 13, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(s_sq_mark, C(COL_WARN), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(s_sq_mark, true, LV_PART_INDICATOR);
+  lv_obj_add_flag(s_sq_mark, LV_OBJ_FLAG_HIDDEN);
+
+  // Header: status dot + callsign (tap to go back)
+  lv_obj_t *hdr = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(hdr);
+  lv_obj_set_size(hdr, 230, 30);
+  lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 18);
+  lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(hdr, 6, 0);
+  lv_obj_add_flag(hdr, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(hdr, [](lv_event_t *) { ui_show_picker(); }, LV_EVENT_CLICKED, nullptr);
+  s_dot = lv_obj_create(hdr);
+  lv_obj_remove_style_all(s_dot);
+  lv_obj_set_size(s_dot, 8, 8);
+  lv_obj_set_style_radius(s_dot, 4, 0);
+  lv_obj_set_style_bg_opa(s_dot, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(s_dot, C(COL_WARN), 0);
+  s_call = theme_label(hdr, &lv_font_montserrat_14, COL_DIM, (LV_SYMBOL_LEFT " " + g_settings.inst_call).c_str());
+  s_bat = battery_icon_create(hdr);
+
+  s_freq = mk_label(&lv_font_montserrat_40, COL_TEXT, "");
+  lv_obj_align(s_freq, LV_ALIGN_TOP_MID, 0, 46);
+  lv_obj_add_flag(s_freq, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(s_freq, 8);
+  lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_LONG_PRESSED, nullptr);
+  s_info = mk_label(&lv_font_montserrat_12, COL_DIM, "");
+  lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, 94);
+
+  // Spectrum + waterfall canvas
+  s_buf = lv_draw_buf_create(CW, CH, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+  s_canvas = lv_canvas_create(s_scr);
+  lv_canvas_set_draw_buf(s_canvas, s_buf);
+  lv_obj_align(s_canvas, LV_ALIGN_TOP_MID, 0, 114);
+  clear_canvas();
+
+  // Receive passband overlay
+  s_pb = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(s_pb);
+  lv_obj_set_style_bg_color(s_pb, C(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(s_pb, LV_OPA_20, 0);
+  lv_obj_remove_flag(s_pb, LV_OBJ_FLAG_CLICKABLE);
+
+  // Tuning marker (moves with s_tune)
+  s_marker = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(s_marker);
+  lv_obj_set_size(s_marker, 2, CH);
+  lv_obj_set_style_bg_color(s_marker, C(COL_BAD), 0);
+  lv_obj_set_style_bg_opa(s_marker, LV_OPA_70, 0);
+  lv_obj_align(s_marker, LV_ALIGN_TOP_MID, 0, 114);
+  lv_obj_remove_flag(s_marker, LV_OBJ_FLAG_CLICKABLE);
+
+  s_lo = mk_label(&lv_font_montserrat_12, COL_DIM, "");
+  lv_obj_align(s_lo, LV_ALIGN_TOP_LEFT, (360 - CW) / 2 + 4, 116);
+  s_hi = mk_label(&lv_font_montserrat_12, COL_DIM, "");
+  lv_obj_align(s_hi, LV_ALIGN_TOP_RIGHT, -(360 - CW) / 2 - 4, 116);
+
+  // SNR readout under the spectrum, coloured like the LED ring
+  s_snr = mk_label(&lv_font_montserrat_14, COL_DIM, "");
+  lv_obj_align(s_snr, LV_ALIGN_TOP_MID, 0, 114 + CH + 8);
+
+  // Mode (left) and volume (right) pills
+  s_mode_btn = theme_pill(s_scr, "", COL_EDGE, 72, 30);
+  s_mode_lbl = lv_obj_get_child(s_mode_btn, 0);
+  lv_obj_set_style_text_color(s_mode_lbl, C(COL_TEXT), 0);
+  lv_obj_align(s_mode_btn, LV_ALIGN_TOP_MID, -84, 114 + CH + 4);
+  lv_obj_add_event_cb(
+      s_mode_btn,
+      [](lv_event_t *) { set_mode((cur_mode_idx() + 1) % kNumModes); }, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(s_mode_btn, [](lv_event_t *) { open_mode_picker(); }, LV_EVENT_LONG_PRESSED, nullptr);
+  s_vol_btn = theme_pill(s_scr, "", COL_EDGE, 72, 30);
+  s_vol_lbl = lv_obj_get_child(s_vol_btn, 0);
+  lv_obj_align(s_vol_btn, LV_ALIGN_TOP_MID, 84, 114 + CH + 4);
+  lv_obj_add_event_cb(
+      s_vol_btn,
+      [](lv_event_t *) {
+        g_settings.muted = !g_settings.muted;
+        update_volume();
+        s_saved = false;
+        s_view_changed_at = millis();
+      },
+      LV_EVENT_CLICKED, nullptr);
+
+  s_status = mk_label(&lv_font_montserrat_14, COL_WARN, "connecting...");
+  lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 114 + 22);
+
+  // Transparent touch layer over the whole spectrum/waterfall, created after
+  // every overlay so nothing on top of the canvas can swallow the tap.
+  lv_obj_t *touch = lv_obj_create(s_scr);
+  lv_obj_remove_style_all(touch);
+  lv_obj_set_size(touch, CW, CH);
+  lv_obj_align(touch, LV_ALIGN_TOP_MID, 0, 114);
+  lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(touch, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(touch, on_canvas_press, LV_EVENT_PRESSED, nullptr);
+  lv_obj_add_event_cb(touch, on_canvas_pressing, LV_EVENT_PRESSING, nullptr);
+  lv_obj_add_event_cb(touch, on_canvas_click, LV_EVENT_CLICKED, nullptr);
+
+  // Recentre: snap the view back onto the tuned frequency (shown when panned).
+  s_recenter = lv_button_create(s_scr);
+  lv_obj_set_size(s_recenter, 34, 34);
+  lv_obj_set_style_radius(s_recenter, 17, 0);
+  lv_obj_set_style_bg_color(s_recenter, C(COL_PANEL), 0);
+  lv_obj_set_style_bg_opa(s_recenter, LV_OPA_80, 0);
+  lv_obj_set_style_border_color(s_recenter, C(COL_ACCENT), 0);
+  lv_obj_set_style_border_width(s_recenter, 2, 0);
+  lv_obj_set_style_shadow_width(s_recenter, 0, 0);
+  lv_obj_t *rl = theme_label(s_recenter, &lv_font_montserrat_16, COL_ACCENT, LV_SYMBOL_GPS);
+  lv_obj_center(rl);
+  lv_obj_align(s_recenter, LV_ALIGN_TOP_RIGHT, -(360 - CW) / 2 - 6, 114 + CH - 40);
+  lv_obj_add_event_cb(
+      s_recenter,
+      [](lv_event_t *) {
+        s_follow = true;
+        view_changed();
+      },
+      LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_flag(s_recenter, LV_OBJ_FLAG_HIDDEN);
+
+  // Tuning lock (padlock), beside the knob chip
+  s_lock = padlock_create(s_scr, 36);
+  lv_obj_align(s_lock, LV_ALIGN_BOTTOM_MID, 86, -30);
+  lv_obj_add_event_cb(
+      s_lock,
+      [](lv_event_t *) {
+        g_settings.tune_locked = !g_settings.tune_locked;
+        padlock_set(s_lock, locked());
+        settings_save();
+        refresh_labels();
+      },
+      LV_EVENT_CLICKED, nullptr);
+  padlock_set(s_lock, locked());
+
+  // Knob function chip
+  s_chip = theme_pill(s_scr, "", COL_ACCENT, 120, 38);
+  s_chip_lbl = lv_obj_get_child(s_chip, 0);
+  lv_obj_align(s_chip, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_add_event_cb(
+      s_chip,
+      [](lv_event_t *) { set_fn((KnobFn)(((int)s_fn + 1) % 5)); }, LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(s_chip, [](lv_event_t *) { open_menu(); }, LV_EVENT_LONG_PRESSED, nullptr);
+
+  set_fn(KnobFn::Tune);
+  update_volume();
+  s_audio_gen = 0;
+  view_changed();  // positions marker + passband, sets the view and audio tune
+  s_saved = true;
+  sdr_connect(g_settings.inst_url);
+  s_last_state = SdrState::Idle;
+  ui_load(s_scr);
+}
+
+void radio_destroy() {
+  audio_stop();
+  led_ring_off();
+  sdr_disconnect();
+  if (!s_saved) {
+    g_settings.freq_hz = s_tune;
+    g_settings.span_hz = s_span;
+    settings_save_view();
+    s_saved = true;
+  }
+  // The canvas goes with its screen; free the buffer once that's happened.
+  lv_draw_buf_t *b = s_buf;
+  s_buf = nullptr;
+  lv_timer_create([](lv_timer_t *t) {
+    lv_draw_buf_destroy((lv_draw_buf_t *)lv_timer_get_user_data(t));
+    lv_timer_delete(t);
+  }, 1000, b);
+}
+
+void radio_tick(int knob) {
+  if (s_overlay) {
+    if (knob) menu_knob(knob);
+    knob = 0;  // pickers are touch-driven; the knob only scrolls the menu
+  }
+  if (knob) {
+    if (s_fn == KnobFn::Tune && locked()) {
+      knob = 0;  // locked: the knob doesn't tune
+    } else if (s_fn == KnobFn::Tune) {
+      // Spin faster -> bigger steps, by the gap between clicks. The effective
+      // step is what the STEP readout shows, so one click always matches it.
+      s_accel = knob_accel();
+      int64_t step = (int64_t)tune_step() * s_accel;
+      int64_t c = ((int64_t)s_tune + step / 2) / step * step + (int64_t)knob * step;
+      s_tune = c < 0 ? 0 : (uint32_t)c;
+    } else if (s_fn == KnobFn::Squelch) {
+      int v = g_settings.squelch_db < SQL_MIN ? SQL_OFF : g_settings.squelch_db;
+      v += knob;
+      v = v < SQL_OFF ? SQL_OFF : (v > SQL_MAX ? SQL_MAX : v);
+      g_settings.squelch_db = v <= SQL_OFF ? -999 : v;
+      audio_set_squelch(g_settings.squelch_db);
+      place_sq_mark();
+      update_chip();
+      s_saved = false;
+      s_view_changed_at = millis();
+      knob = 0;
+    } else if (s_fn == KnobFn::Bandwidth) {
+      int w = cur_width() + knob * bw_step();
+      int mx = cur_mode().max_w;
+      w = w < BW_MIN ? BW_MIN : (w > mx ? mx : w);
+      g_settings.bw_hz[cur_mode_idx()] = w;
+      set_ring_value(w);
+      update_chip();
+      // falls through to view_changed(): re-tunes with the new edges
+    } else if (s_fn == KnobFn::Volume) {
+      int v = (int)g_settings.volume + knob * 2;
+      g_settings.volume = v < 0 ? 0 : (v > 100 ? 100 : v);
+      if (g_settings.muted && knob > 0) g_settings.muted = false;
+      update_volume();
+      update_chip();
+      s_saved = false;
+      s_view_changed_at = millis();
+      knob = 0;  // volume doesn't move the view
+    } else {
+      s_zoom_idx += knob;
+      s_zoom_idx = s_zoom_idx < 0 ? 0 : (s_zoom_idx >= kNumSpans ? kNumSpans - 1 : s_zoom_idx);
+      set_ring_value(s_zoom_idx);
+      s_span = span_for(s_zoom_idx);
+    }
+    if (knob) view_changed();
+  }
+
+  if (s_accel > 1 && knob_idle_ms() > 400) {
+    s_accel = 1;
+    refresh_labels();
+  }
+
+  // Audio follows the spectrum session (same user_session_id).
+  SdrSession ss;
+  extern bool g_led_disabled;  // debug quiet mode also keeps audio off
+  if (sdr_session(&ss) && !g_led_disabled) {
+    // Re-attach whenever the session changed or audio was stopped for any reason.
+    if (ss.gen != s_audio_gen || !audio_has_session()) {
+      s_audio_gen = ss.gen;
+      int lo, hi;
+      cur_edges(&lo, &hi);
+      audio_tune(s_tune, cur_mode().id, lo, hi);
+      audio_set_squelch(g_settings.squelch_db);
+      audio_set_session(ss.host, ss.port, ss.tls, ss.path_prefix, ss.uuid, ss.gen);
+    }
+  }
+  // Time-aligned with the speaker: the reading for the audio you hear now.
+  float snr = audio_snr_db_playing();
+  led_ring_snr(snr);
+  // SQL mode: ring shows the live SNR against the threshold marker; green
+  // while the gate would be open, grey while it's closed.
+  if (s_fn == KnobFn::Squelch && !s_overlay) {
+    float v = isnan(snr) ? SQL_OFF : snr;
+    v = v < SQL_OFF ? SQL_OFF : (v > SQL_MAX ? SQL_MAX : v);
+    s_ring_snr = v > s_ring_snr ? v : s_ring_snr + (v - s_ring_snr) * 0.15f;
+    set_ring_value((int)lroundf(s_ring_snr));
+    bool open = g_settings.squelch_db < SQL_MIN || (!isnan(snr) && snr >= g_settings.squelch_db);
+    if ((int)open != s_gate_shown) {
+      s_gate_shown = open;
+      lv_obj_set_style_arc_color(s_ring, C(open ? COL_OK : COL_DIM), LV_PART_INDICATOR);
+      lv_obj_set_style_arc_color(s_sq_mark, C(COL_WARN), LV_PART_INDICATOR);
+    }
+  }
+  // TUNE mode with a squelch set: dim the SNR fill while the gate is closed and
+  // colour the threshold marker (amber closed, white open).
+  if (s_fn == KnobFn::Tune && g_settings.squelch_db >= SQL_MIN && !s_overlay) {
+    bool open = !isnan(snr) && snr >= g_settings.squelch_db;
+    if ((int)open != s_gate_shown) {
+      s_gate_shown = open;
+      lv_obj_set_style_arc_opa(s_ring, open ? LV_OPA_COVER : LV_OPA_50, LV_PART_INDICATOR);
+      lv_obj_set_style_arc_color(s_sq_mark, C(open ? 0xffffff : COL_WARN), LV_PART_INDICATOR);
+    }
+  }
+  // Rim SNR meter: fast attack, slow release, like a real S-meter.
+  if (s_fn == KnobFn::Tune && !s_overlay) {
+    float target = isnan(snr) ? SNR_MIN : (snr < SNR_MIN ? SNR_MIN : (snr > SNR_MAX ? SNR_MAX : snr));
+    s_ring_snr = target > s_ring_snr ? target : s_ring_snr + (target - s_ring_snr) * 0.08f;
+    set_ring_value((int)(s_ring_snr * 10));
+  }
+  static int last_snr = -999;
+  int snr_i = isnan(snr) ? -999 : (int)lroundf(snr);
+  if (snr_i != last_snr) {
+    last_snr = snr_i;
+    if (snr_i == -999) {
+      lv_label_set_text(s_snr, audio_live() ? "" : (sdr_state() == SdrState::Connected ? "audio..." : ""));
+      lv_obj_set_style_text_color(s_snr, C(COL_DIM), 0);
+    } else {
+      lv_label_set_text_fmt(s_snr, "%d dB", snr_i);
+      lv_obj_set_style_text_color(s_snr, C(snr_i >= 15 ? COL_OK : (snr_i >= 6 ? COL_WARN : COL_BAD)), 0);
+    }
+  }
+
+  SdrState st = sdr_state();
+  if (st != s_last_state) {
+    s_last_state = st;
+    uint32_t col = st == SdrState::Connected ? COL_OK : (st == SdrState::Error ? COL_BAD : COL_WARN);
+    lv_obj_set_style_bg_color(s_dot, C(col), 0);
+    if (st == SdrState::Connected) {
+      lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_remove_flag(s_status, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_style_text_color(s_status, C(col), 0);
+    }
+  }
+  if (st != SdrState::Connected) {
+    String t = sdr_status_text();
+    if (strcmp(lv_label_get_text(s_status), t.c_str())) lv_label_set_text(s_status, t.c_str());
+  }
+
+  // Receiver coverage arrives with the first config: re-apply zoom limits.
+  static uint32_t last_max = 0;
+  if (sdr_max_hz() != last_max) {
+    last_max = sdr_max_hz();
+    s_span = span_for(s_zoom_idx);
+    view_changed();
+  }
+
+  // Spectrum/waterfall are hidden under an open menu/picker: don't draw them
+  // (drop the frame) so the overlay stays smooth.
+  SpectrumFrame f;
+  if (sdr_take_frame(&f) && !s_overlay && !saver_spectrum_paused()) draw_frame(f);
+
+  static uint32_t bat_at = 0;
+  if (millis() - bat_at > 2000) {
+    bat_at = millis();
+    battery_icon_update(s_bat);
+  }
+
+  // Persist the view a few seconds after the user stops turning.
+  if (!s_saved && millis() - s_view_changed_at > 5000) {
+    g_settings.freq_hz = s_tune;
+    g_settings.span_hz = s_span;
+    settings_save_view();
+    s_saved = true;
+  }
+}
