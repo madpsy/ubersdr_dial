@@ -10,12 +10,23 @@ on a rotary knob, built around an ESP32-S3.
 
 **[Open the web flasher](https://madpsy.github.io/ubersdr_dial/flash/)** in
 Chrome or Edge, plug the dial in over USB-C, and click **Install**. You don't
-need drivers, a BOOT button or a toolchain.
+need drivers or a toolchain, and usually not the BOOT button either.
 
 You can also enter your Wi-Fi details first. The page adds them to the flash
 image right there in your browser, so they're never sent anywhere. On first
 boot the dial joins your network straight away. If you leave them blank, the
 dial starts its setup hotspot instead (see below).
+
+Normally the flasher resets the dial into download mode by itself. If no port
+shows up or flashing fails to start, put it into download mode by hand. This
+is needed if the firmware on the dial has crashed or never finished flashing:
+
+1. Switch the dial off.
+2. Push a pin into the small hole next to the USB-C port and keep it held
+   down. That's the BOOT button.
+3. Switch the dial on with the pin still held, then let go.
+
+The screen stays dark. Flash it, then switch it off and on again.
 
 How it works: the settings go into a dedicated `usercfg` flash partition. The
 firmware imports them on first boot, then erases that partition.
@@ -87,8 +98,9 @@ pio run -e jc3636k718                 # build
 pio run -e jc3636k718 -t upload       # build and flash over USB-C
 ```
 
-The board uses the ESP32-S3's native USB, so no BOOT button is needed:
-esptool resets it into download mode by itself. On Linux it appears as
+The board uses the ESP32-S3's native USB, so esptool normally resets it into
+download mode by itself. If it can't, use the manual BOOT-button method in
+[Install](#from-your-browser-easiest). On Linux it appears as
 `/dev/ttyACM0`.
 
 To read the serial log, use `pio device monitor`. You can also open the port

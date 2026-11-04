@@ -236,8 +236,22 @@
       <div class="warn">
         ⚠️ No port listed? The cable may be charge-only: try another. Close anything else
         using the port too, such as a serial monitor. The dial uses the ESP32-S3's built-in
-        USB, so it needs no driver and no BOOT button: the flasher resets it into download
-        mode by itself.
+        USB, so it needs no driver, and the flasher normally resets it into download mode
+        by itself.
+      </div>
+
+      <div class="warn">
+        ⚠️ <strong>Still no port, or "Failed to initialize"?</strong> Put the dial into
+        download mode by hand. This is needed if the firmware on it has crashed or never
+        finished flashing.
+        <ol style="margin:6px 0 0;padding-left:20px">
+          <li>Switch the dial off.</li>
+          <li>Push a pin (a SIM tool or straightened paper clip) into the small hole next to the
+              USB-C port, and keep it held down. That's the BOOT button.</li>
+          <li>With the pin still held, switch the dial on, then let go.</li>
+        </ol>
+        The screen stays dark: that's expected. Click <strong>Install</strong> and pick the port.
+        After flashing, switch the dial off and on again.
       </div>
 
       <h2>After flashing</h2>
