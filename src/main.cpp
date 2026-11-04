@@ -21,6 +21,10 @@
 #include "hw/led_ring.h"
 #include "ui/ui.h"
 
+#ifndef DIAL_VERSION  // set from VERSION by version.py
+#define DIAL_VERSION "dev"
+#endif
+
 // The loop task only runs LVGL and the UI now (networking is on core 0).
 SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 
@@ -57,6 +61,7 @@ void setup() {
   // which stalls whichever task logs (audio/network) -> dropouts. Drop logs instead.
   Serial.setTxTimeoutMs(0);
   mbedtls_platform_set_calloc_free(tls_calloc, heap_caps_free);
+  Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
   settings_load();
 
   lv_init();

@@ -117,15 +117,26 @@ stty -F /dev/ttyACM0 -hupcl raw -echo 115200 && cat /dev/ttyACM0
 `jc3636k718` is the environment to use. `jc3636k718-idf`, which builds Arduino
 as an ESP-IDF component, is an experiment and isn't recommended.
 
-### Updating the web flasher
+### Releasing
 
 ```sh
-./build.sh
+./release.sh 1.2.0
 ```
 
-This builds the firmware and copies `bootloader.bin`, `partitions.bin`,
-`boot_app0.bin` and `firmware.bin` into `docs/flash/`. Commit them, and GitHub
-Pages publishes them from the `docs/` folder. The page itself is
+This does the whole release:
+
+1. Checks that you're on a clean `main` that's level with GitHub.
+2. Writes the version into `VERSION` and the flasher's manifest and page.
+3. Builds the firmware and copies `bootloader.bin`, `partitions.bin`,
+   `boot_app0.bin` and `firmware.bin` into `docs/flash/`.
+4. Checks that those binaries are this build.
+5. Commits, tags `v1.2.0` and pushes.
+
+GitHub Pages then publishes the new flasher from the `docs/` folder. The
+firmware gets its version from `VERSION` at build time and shows it on the
+start screen.
+
+To stage the binaries without releasing, run `./build.sh` on its own. The page itself is
 `docs/flash/index.html`, using
 [ESP Web Tools](https://esphome.github.io/esp-web-tools/) (Apache 2.0).
 

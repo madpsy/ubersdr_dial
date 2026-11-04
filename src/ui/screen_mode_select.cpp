@@ -2,6 +2,10 @@
 // dial drives the UberSDR web UI, over Bluetooth or a USB cable). Asked on
 // every boot; the last choice is pre-highlighted so a tap is all it takes.
 #include "../app/settings.h"
+
+#ifndef DIAL_VERSION
+#define DIAL_VERSION "dev"
+#endif
 #include "theme.h"
 #include "ui.h"
 
@@ -67,6 +71,8 @@ void modesel_create(void (*on_pick)(int)) {
   s_btn[2] = choice(scr, 2, LV_SYMBOL_USB, "CONTROLLER", "USB", 110);
   lv_obj_t *h = theme_label(scr, &lv_font_montserrat_12, COL_DIM, "Turn to choose  " LV_SYMBOL_BULLET "  tap to start");
   lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -66);
+  lv_obj_t *v = theme_label(scr, &lv_font_montserrat_12, COL_DIM, "v" DIAL_VERSION);
+  lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, -40);
   highlight();
   ui_load(scr);
 }

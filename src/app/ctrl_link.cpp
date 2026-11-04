@@ -74,12 +74,14 @@ void ctrl_rx_spec(const uint8_t *p, size_t n) {
 }
 
 void ctrl_rx_name(const uint8_t *p, size_t n) {
-  portENTER_CRITICAL(&s_mux);
   if (n > sizeof(s_peer) - 1) n = sizeof(s_peer) - 1;
+  portENTER_CRITICAL(&s_mux);
+  // Over USB the page repeats it every second, so only a change is news.
+  bool same = strlen(s_peer) == n && !memcmp(s_peer, p, n);
   memcpy(s_peer, p, n);
   s_peer[n] = 0;
   portEXIT_CRITICAL(&s_mux);
-  Serial.printf("[ctrl] receiver name \"%.*s\"\n", (int)n, (const char *)p);
+  if (!same) Serial.printf("[ctrl] receiver name \"%.*s\"\n", (int)n, (const char *)p);
 }
 
 void ctrl_rx_lost() {
