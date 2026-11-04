@@ -23,7 +23,8 @@ struct Settings {
   bool ctrl_waterfall = true; // controller mode: waterfall background
   bool ctrl_wf_smooth = false; // its rate: false = battery (5 lines/s), true = smooth (10/s)
   bool tune_locked = false;   // receiver mode: tuning lock (as v2's padlock)
-  uint8_t saver_mode = 0;     // SaverMode: dim (default) / off / spectrum off / never
+  uint8_t saver_mode = 0;     // SaverMode: dim (default) / off / spectrum off / never / dim then off
+  uint16_t saver_off_secs = 0;  // "dim, then off": idle time before the screen goes off; 0 = 3x saver_secs
   uint16_t saver_secs = 120;  // idle time before the saver starts     // last startup choice: 0 receiver, 1 controller    // filter width per mode (index into the mode table); 0 = default
 };
 

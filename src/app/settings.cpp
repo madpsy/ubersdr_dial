@@ -75,6 +75,7 @@ void settings_load() {
   g_settings.tune_locked = s_prefs.getBool("lock", false);
   g_settings.saver_mode = s_prefs.getUChar("svm", 0);
   g_settings.saver_secs = s_prefs.getUShort("svs", 120);
+  g_settings.saver_off_secs = s_prefs.getUShort("svo", 0);
   s_prefs.end();
 }
 
@@ -95,6 +96,7 @@ void settings_save() {
   s_prefs.putBool("lock", g_settings.tune_locked);
   s_prefs.putUChar("svm", g_settings.saver_mode);
   s_prefs.putUShort("svs", g_settings.saver_secs);
+  s_prefs.putUShort("svo", g_settings.saver_off_secs);
   s_prefs.putString("mode", g_settings.mode);
   s_prefs.putUChar("vol", g_settings.volume);
   s_prefs.putBool("mute", g_settings.muted);

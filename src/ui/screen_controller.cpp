@@ -634,8 +634,11 @@ static void send_wf_rate();
 static const MenuChoice kBrightChoices[] = {{"20%", 20}, {"40%", 40}, {"60%", 60}, {"80%", 80}, {"100%", 100}};
 static const MenuChoice kOnOff[] = {{"On", 1}, {"Off", 0}};
 static const MenuChoice kSaverChoices[] = {
-    {"Dim", SAVER_DIM}, {"Screen off", SAVER_OFF}, {"Spectrum off", SAVER_SPECTRUM}, {"Never", SAVER_NEVER}};
+    {"Dim", SAVER_DIM},         {"Screen off", SAVER_OFF}, {"Dim, then\noff", SAVER_DIM_OFF},
+    {"Spectrum off", SAVER_SPECTRUM}, {"Never", SAVER_NEVER}};
 static const MenuChoice kSaverTimes[] = {{"30 s", 30}, {"1 min", 60}, {"2 min", 120}, {"5 min", 300}, {"10 min", 600}};
+static const MenuChoice kSaverOffTimes[] = {{"Auto\n3x dim", 0}, {"5 min", 300},   {"10 min", 600},
+                                            {"20 min", 1200},     {"30 min", 1800}, {"1 hour", 3600}};
 static const MenuChoice kWfRate[] = {{"Battery\n5/s", 0}, {"Smooth\n10/s", 1}};
 
 static const MenuChoice kStepChoices[] = {{"Auto", 0},      {"10 Hz", 10},   {"100 Hz", 100}, {"500 Hz", 500},
@@ -700,13 +703,19 @@ static const MenuItem kCtrlMenu[] = {
        g_settings.saver_mode = v;
        settings_save();
      },
-     kSaverChoices, 4},
+     kSaverChoices, 5},
     {LV_SYMBOL_LOOP, "Saver after", [] { return (int)g_settings.saver_secs; },
      [](int v) {
        g_settings.saver_secs = v;
        settings_save();
      },
      kSaverTimes, 5, [] { return g_settings.saver_mode != SAVER_NEVER; }},
+    {LV_SYMBOL_POWER, "Screen off after", [] { return (int)g_settings.saver_off_secs; },
+     [](int v) {
+       g_settings.saver_off_secs = v;
+       settings_save();
+     },
+     kSaverOffTimes, 6, [] { return g_settings.saver_mode == SAVER_DIM_OFF; }},
     {LV_SYMBOL_REFRESH, "Restart (choose mode)", nullptr, [](int) { ESP.restart(); }, nullptr, 0},
 };
 
