@@ -1,5 +1,5 @@
 // UberSDR Dial — standalone UberSDR receiver front-end for the Guition
-// JC3636K718 round knob display.
+// JC3636K518C (aka JC3636K718) round knob display.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>

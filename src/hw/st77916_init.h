@@ -1,4 +1,4 @@
-// ST77916 vendor init sequence for the Guition JC3636K718 1.8" 360x360 panel.
+// ST77916 vendor init sequence for the Guition JC3636K518C (aka JC3636K718) 1.8" 360x360 panel.
 // Source: manufacturer demo JC3636K718_knob_EN (scr_st77916.h), via
 // github.com/MichalZaniewicz/esphome-guition-jc3636k718c-va base/core.yaml.
 // Format: cmd, data_len, data... ; terminated by 0xFF,0xFF.

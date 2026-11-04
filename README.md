@@ -1,8 +1,8 @@
 # UberSDR Dial
 
-Firmware that turns the **Guition JC3636K718** into a hand-held front end for
-[UberSDR](https://ubersdr.org). The JC3636K718 is a 1.8" round touch display
-on a rotary knob, built around an ESP32-S3.
+ESP32 firmware that turns the **Guition JC3636K518C** (also sold as
+JC3636K718) into a hand-held front end for [UberSDR](https://ubersdr.org).
+The board is ESP32-S3 based: a 1.8" round touch display on a rotary knob.
 
 ## Install
 
@@ -76,7 +76,7 @@ To change networks later, use **Wi-Fi setup** in the menu.
 
 ## Hardware
 
-Guition JC3636K718:
+Guition JC3636K518C (also sold as JC3636K718):
 
 - ESP32-S3R8, with 16 MB flash and 8 MB octal PSRAM
 - 360×360 ST77916 display over QSPI, with CST816 touch

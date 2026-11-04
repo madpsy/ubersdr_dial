@@ -1,4 +1,4 @@
-// Guition JC3636K718 pin map (from the manufacturer demo pincfg.h).
+// Guition JC3636K518C (aka JC3636K718) pin map (from the manufacturer demo pincfg.h).
 #pragma once
 
 #define LCD_W 360
