@@ -4,6 +4,9 @@ ESP32 firmware that turns the **Guition JC3636K518C** (also sold as
 JC3636K718) into a hand-held front end for [UberSDR](https://ubersdr.org).
 The board is ESP32-S3 based: a 1.8" round touch display on a rotary knob.
 
+Tested with the **JC3636K718C-I-Y1(RD)**
+([AliExpress](https://www.aliexpress.com/item/1005011771382178.html)).
+
 <p align="center">
   <img src="docs/dial-1.png" alt="UberSDR Dial" width="45%">
   <img src="docs/dial-2.png" alt="UberSDR Dial" width="45%">
