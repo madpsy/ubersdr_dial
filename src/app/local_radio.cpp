@@ -461,7 +461,12 @@ static void lr_status(String *text, uint32_t *dot) {
   }
 }
 
-const DialLink kLocalLink = {true, lr_loop, lr_connected, lr_state, lr_send, lr_take_line, lr_status};
+static void lr_zoom_range(uint32_t *min_hz, uint32_t *max_hz) {
+  *min_hz = span_for(kNumSpans - 1);
+  *max_hz = span_for(0);
+}
+
+const DialLink kLocalLink = {true, lr_loop, lr_connected, lr_state, lr_send, lr_take_line, lr_status, lr_zoom_range};
 
 void local_radio_start() {
   s_tune = s_center = g_settings.freq_hz;

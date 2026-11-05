@@ -75,7 +75,8 @@ static uint32_t s_dot_col = 0;
 // Bluetooth, with the tuned marker and receive passband drawn over it.
 static constexpr int WF = 360, WF_LINE_H = 1;  // 1 px per line at ~10 lines/s: smooth scroll
 // Split background: spectrum trace on top, waterfall below.
-static constexpr int SPEC_TOP_H = 150, WF_Y0 = SPEC_TOP_H + 2;
+// Between them: a 2 px divider, then the frequency scale strip.
+static constexpr int SPEC_TOP_H = 150, SCALE_Y0 = SPEC_TOP_H + 2, SCALE_H = 20, WF_Y0 = SCALE_Y0 + SCALE_H;
 // Nothing holds a finished picture: the display asks for each row as it sends
 // it (bg_row), and the rim, marker and passband are added to the row then.
 // The waterfall is a ring of rows, so a new line moves a pointer, not 150 KB.
@@ -85,6 +86,7 @@ static uint16_t *s_spec_px;       // SPEC_TOP_H x WF: the spectrum trace (PSRAM)
 static uint16_t *s_ring;          // WF_ROWS x WF waterfall rows (PSRAM)
 static int s_head = 0;            // ring row shown at the top of the waterfall
 alignas(4) static uint16_t s_div_row[WF];  // the divider between the two
+static uint16_t *s_scale_px;      // SCALE_H x WF: frequency scale under the spectrum (PSRAM)
 static lv_obj_t *s_rim_host;      // hidden parent of the LVGL arcs when the software rim is in use
 static bool s_rim_dirty = false;
 static void wf_rim_update();
@@ -471,11 +473,135 @@ static inline bool rim_colour(const RimPx &p, const RimSnap &r, uint16_t *c) {
   return true;
 }
 
+// ---------------------------------------------------------------- frequency scale
+// Ticks hanging from the divider with MHz labels (3 decimals) under the
+// spectrum. Painted into its own strip of background rows whenever the view
+// (centre or span) moves; the step is the smallest 1/2/5 that keeps the
+// labels apart. Glyphs are taken from the 16 px font once, as alpha maps.
+static constexpr int SCALE_GW = 16, SCALE_GH = 20;  // largest glyph box kept
+struct ScaleGlyph { uint8_t w, h, adv; int8_t ox, oy; uint8_t a[SCALE_GW * SCALE_GH]; };
+static const lv_font_t *const kScaleFont = &lv_font_montserrat_16;
+static ScaleGlyph s_glyph[11];  // '0'..'9', '.'
+static bool s_glyph_ok = false;
+static uint32_t s_scale_center = 0, s_scale_span = 0;
+static constexpr int SCALE_BASE = 17;  // label baseline, row in the strip
+
+static void scale_glyphs() {
+  if (s_glyph_ok) return;
+  lv_draw_buf_t *buf = lv_draw_buf_create(SCALE_GW, SCALE_GH, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+  for (int i = 0; i < 11; i++) {
+    ScaleGlyph &g = s_glyph[i];
+    memset(&g, 0, sizeof(g));
+    lv_font_glyph_dsc_t d;
+    if (!lv_font_get_glyph_dsc(kScaleFont, &d, i < 10 ? '0' + i : '.', 0)) continue;
+    g.adv = d.adv_w;
+    if (d.box_w > SCALE_GW || d.box_h > SCALE_GH || !buf) continue;
+    g.w = d.box_w;
+    g.h = d.box_h;
+    g.ox = d.ofs_x;
+    g.oy = d.ofs_y;
+    memset(buf->data, 0, buf->data_size);
+    // Built-in fonts return the draw buffer they filled (A8), not the pixels.
+    const lv_draw_buf_t *out = (const lv_draw_buf_t *)lv_font_get_glyph_bitmap(&d, buf);
+    if (!out) continue;
+    const uint8_t *bm = out->data;
+    uint32_t stride = lv_draw_buf_width_to_stride(d.box_w, LV_COLOR_FORMAT_A8);
+    for (int y = 0; y < g.h; y++) memcpy(g.a + y * g.w, bm + y * stride, g.w);
+  }
+  if (buf) lv_draw_buf_destroy(buf);
+  s_glyph_ok = true;
+}
+
+static inline int scale_glyph_idx(char c) { return c == '.' ? 10 : (c >= '0' && c <= '9' ? c - '0' : -1); }
+
+static int scale_text_w(const char *t) {
+  int w = 0;
+  for (; *t; t++) {
+    int i = scale_glyph_idx(*t);
+    if (i >= 0) w += s_glyph[i].adv;
+  }
+  return w;
+}
+
+static void scale_text(int x, const char *t, uint16_t col) {
+  for (; *t; t++) {
+    int i = scale_glyph_idx(*t);
+    if (i < 0) continue;
+    const ScaleGlyph &g = s_glyph[i];
+    int top = SCALE_BASE - g.oy - g.h;
+    for (int y = 0; y < g.h; y++) {
+      int ry = top + y;
+      if (ry < 0 || ry >= SCALE_H) continue;
+      uint16_t *row = s_scale_px + (size_t)ry * WF;
+      for (int xx = 0; xx < g.w; xx++) {
+        int px = x + g.ox + xx;
+        uint8_t a = g.a[y * g.w + xx];
+        if (a && px >= 0 && px < WF) row[px] = blend565(col, row[px], a + 1);
+      }
+    }
+    x += g.adv;
+  }
+}
+
+static void wf_scale_update() {
+  if (!s_wf_on || !s_scale_px) return;
+  if (s_wf_center == s_scale_center && s_wf_span == s_scale_span) return;
+  s_scale_center = s_wf_center;
+  s_scale_span = s_wf_span;
+  static const uint16_t bg = rgb565(6, 9, 16), tick = rgb565(90, 112, 120), minor = rgb565(45, 58, 66);
+  static const uint16_t txt = to565(C(COL_TEXT));
+  for (int i = 0; i < SCALE_H * WF; i++) s_scale_px[i] = bg;
+  if (s_wf_span) {
+    scale_glyphs();
+    const int64_t lo = (int64_t)s_wf_center - s_wf_span / 2, hi = lo + s_wf_span;
+    char t[16];
+    snprintf(t, sizeof t, "%.3f", (double)(hi > 0 ? hi : 0) / 1e6);
+    const int need = scale_text_w(t) + 14;  // widest label plus a gap
+    // Smallest 1/2/5 step (>= 1 kHz: 3 decimals of MHz) whose labels don't touch.
+    static const int kMul[3] = {1, 2, 5};
+    int k = 0;
+    int64_t dec = 1000, step = 1000;
+    while (step * WF / (int64_t)s_wf_span < need) {
+      if (++k == 3) {
+        k = 0;
+        dec *= 10;
+      }
+      step = kMul[k] * dec;
+    }
+    const int64_t sub = step / (kMul[k] == 2 ? 4 : 5);  // minor ticks: 2s in quarters, 1s and 5s in fifths
+    // Inside the rim on these rows, and clear of the SNR figure in the middle.
+    const float dy = SCALE_Y0 + SCALE_H - 179.5f, half = sqrtf(160.0f * 160.0f - dy * dy);
+    const int xmin = (int)(179.5f - half), xmax = (int)(179.5f + half);
+    const int snr0 = 180 - 34, snr1 = 180 + 34;
+    for (int64_t f = (lo / sub) * sub; f <= hi; f += sub) {
+      if (f < 0) continue;
+      int x = (int)((f - lo) * WF / (int64_t)s_wf_span);
+      if (x < 0 || x >= WF) continue;
+      bool major = f % step == 0;
+      for (int y = 0; y < (major ? 4 : 2); y++) s_scale_px[(size_t)y * WF + x] = major ? tick : minor;
+      if (!major) continue;
+      snprintf(t, sizeof t, "%.3f", (double)f / 1e6);
+      int w = scale_text_w(t), x0 = x - w / 2;
+      // Just clipping the SNR gap: slide the label off it, away from the
+      // centre, by up to 10 px (less than the gap between labels).
+      if (x0 + w > snr0 && x0 < snr1) {
+        int nx = x < 180 ? snr0 - w : snr1;
+        if (abs(nx - x0) > 10) continue;
+        x0 = nx;
+      }
+      if (x0 < xmin || x0 + w > xmax) continue;
+      scale_text(x0, t, txt);
+    }
+  }
+  display_mark_dirty(0, SCALE_Y0, WF - 1, WF_Y0 - 1);
+}
+
 // The display's background, a row at a time: spectrum, divider or ring row,
 // plus the passband, marker and rim where they fall in it.
 static const uint16_t *bg_row(int y, uint16_t *scratch) {
   const uint16_t *src = y < SPEC_TOP_H ? s_spec_px + (size_t)y * WF
-                        : y < WF_Y0    ? s_div_row
+                        : y < SCALE_Y0 ? s_div_row
+                        : y < WF_Y0    ? s_scale_px + (size_t)(y - SCALE_Y0) * WF
                                        : s_ring + (size_t)((s_head + y - WF_Y0) % WF_ROWS) * WF;
   int r0 = s_rim_row[y], r1 = s_rim_row[y + 1];
   bool pb = s_pb_x1 > s_pb_x0, mk = s_mark_x >= 0;
@@ -970,10 +1096,12 @@ void controller_create(const DialLink *link) {
   if (s_wf_on && !s_spec_px) {
     s_spec_px = (uint16_t *)ps_malloc((size_t)SPEC_TOP_H * WF * 2);
     s_ring = (uint16_t *)ps_malloc((size_t)WF_ROWS * WF * 2);
-    if (!s_spec_px || !s_ring) {
+    s_scale_px = (uint16_t *)ps_malloc((size_t)SCALE_H * WF * 2);
+    if (!s_spec_px || !s_ring || !s_scale_px) {
       free(s_spec_px);
       free(s_ring);
-      s_spec_px = s_ring = nullptr;
+      free(s_scale_px);
+      s_spec_px = s_ring = s_scale_px = nullptr;
     }
   }
   if (!s_spec_px) s_wf_on = false;
@@ -985,6 +1113,9 @@ void controller_create(const DialLink *link) {
     for (int i = 0; i < SPEC_TOP_H * WF; i++) s_spec_px[i] = sbg;
     memset(s_ring, 0, (size_t)WF_ROWS * WF * 2);
     for (int x = 0; x < WF; x++) s_div_row[x] = rgb565(14, 20, 34);
+    s_scale_center = 1;  // force a repaint
+    s_scale_span = 1;
+    wf_scale_update();
     s_head = 0;
     display_set_background_rows(bg_row);
   }
@@ -1352,6 +1483,7 @@ void controller_tick(int knob) {
   }
   // Tuning or bandwidth changed, or a new line: put marker/passband in place.
   if (got_line || state_changed) wf_place_marker();
+  wf_scale_update();  // view moved (new line, or dragged)
   // The software rim follows the waterfall's own redraws (~5/s). If the meter
   // or marker changed and no line has come along to carry it, recomposite —
   // at most 5/s, and only when something actually changed.
@@ -1410,6 +1542,20 @@ void controller_tick(int knob) {
       set_rim(s_st.step_hz ? (int)lroundf(log10f((float)s_st.step_hz) * 10) : 0);
       lv_obj_add_flag(s_mark, LV_OBJ_FLAG_HIDDEN);
       break;
+    case P_ZOOM: {
+      // How far in, on a log scale: empty at the whole receiver, full at the
+      // narrowest view (clockwise zooms in, so the rim fills that way).
+      uint32_t lo, hi;
+      s_link->zoom_range(&lo, &hi);
+      int v = 0;
+      if (s_wf_span && hi > lo) {
+        float f = logf((float)hi / (float)s_wf_span) / logf((float)hi / (float)lo);
+        v = (int)lroundf(fmaxf(0, fminf(1, f)) * 100);
+      }
+      set_rim(v);
+      lv_obj_add_flag(s_mark, LV_OBJ_FLAG_HIDDEN);
+      break;
+    }
     default:
       set_rim(0);
       lv_obj_add_flag(s_mark, LV_OBJ_FLAG_HIDDEN);

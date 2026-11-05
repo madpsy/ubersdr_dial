@@ -165,6 +165,13 @@ static void link_status(String *text, uint32_t *dot) {
   }
 }
 
+// v2's zoom limits: MIN_ZOOM_SPAN_HZ (spectrum-connection.js) up to the whole
+// receiver, 0-30 MHz on UberSDR. The page doesn't send them.
+static void link_zoom_range(uint32_t *min_hz, uint32_t *max_hz) {
+  *min_hz = 2048;
+  *max_hz = 30000000;
+}
+
 const DialLink kCtrlLink = {
-    false, link_loop, link_connected, link_state, link_send, link_take_line, link_status,
+    false, link_loop, link_connected, link_state, link_send, link_take_line, link_status, link_zoom_range,
 };

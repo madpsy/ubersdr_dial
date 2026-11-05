@@ -61,6 +61,8 @@ struct DialLink {
   bool (*take_line)(float *db, int *n, uint32_t *center_hz, uint32_t *span_hz);
   // Header: what we're connected to, and the status dot's colour.
   void (*status)(String *text, uint32_t *dot_col);
+  // Narrowest and widest waterfall span the zoom controls reach (for the rim).
+  void (*zoom_range)(uint32_t *min_hz, uint32_t *max_hz);
 };
 
 extern const DialLink kCtrlLink;   // controller mode, Bluetooth or USB (ctrl_link.cpp)
