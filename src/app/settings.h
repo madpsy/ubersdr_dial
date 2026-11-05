@@ -2,6 +2,9 @@
 #include <Arduino.h>
 
 // Persistent settings (NVS via Preferences).
+// Background behind the controller screen's widgets. Stored in NVS: append only.
+enum CtrlBg : uint8_t { BG_OFF = 0, BG_WATERFALL = 1, BG_SPECTRUM = 2, BG_BOTH = 3 };
+
 struct Settings {
   String wifi_ssid;
   String wifi_pass;
@@ -21,7 +24,7 @@ struct Settings {
   uint16_t bw_hz[8] = {0};
   bool haptics = true;
   uint8_t start_mode = 0;
-  bool ctrl_waterfall = true; // controller mode: waterfall background
+  uint8_t ctrl_bg = BG_BOTH;  // background: off / waterfall / spectrum / both (CtrlBg)
   bool ctrl_wf_smooth = false; // its rate: false = battery (5 lines/s), true = smooth (10/s)
   uint8_t ctrl_meter = 0;     // controller screen's big readout: 0 off, 1 SNR, 2 dBFS, 3 S-meter (MeterMode)
   bool tune_locked = false;   // receiver mode: tuning lock (as v2's padlock)

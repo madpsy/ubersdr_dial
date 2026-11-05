@@ -30,6 +30,12 @@ void sdr_set_view(uint32_t center_hz, uint32_t span_hz);
 void sdr_set_rate(int divisor);
 float sdr_frames_per_s();  // measured over the last 10 s (0 until known)
 
+// Whether the spectrum socket should be open (default on). Off, the session
+// and its audio carry on without it; on again, it reopens on the same session.
+void sdr_set_spectrum(bool on);
+// The session looks dead (e.g. audio never comes): register a fresh one.
+void sdr_restart_session();
+
 // Receiver coverage, known after the first config message (0 until then).
 uint32_t sdr_max_hz();
 

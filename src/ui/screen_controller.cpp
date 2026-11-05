@@ -81,9 +81,20 @@ static constexpr int SPEC_TOP_H = 150, SCALE_Y0 = SPEC_TOP_H + 2, SCALE_H = 20, 
 // it (bg_row), and the rim, marker and passband are added to the row then.
 // The waterfall is a ring of rows, so a new line moves a pointer, not 150 KB.
 static constexpr int WF_ROWS = WF - WF_Y0;
-static bool s_wf_on = false;      // waterfall background shown (layered display only)
-static uint16_t *s_spec_px;       // SPEC_TOP_H x WF: the spectrum trace (PSRAM)
-static uint16_t *s_ring;          // WF_ROWS x WF waterfall rows (PSRAM)
+static bool s_wf_on = false;      // a background (spectrum and/or waterfall) shown (layered display only)
+// This screen's layout of it, from the Background setting. Both: the split
+// above. Spectrum or Waterfall alone: that one fills the screen, no scale.
+static int s_spec_h = SPEC_TOP_H;  // spectrum rows from the top (0 = none)
+static int s_wf_y0 = WF_Y0;        // first waterfall row
+static int s_wf_rows = WF_ROWS;    // waterfall rows (0 = none)
+static bool s_scale_on = true;     // divider + frequency scale between them
+// Rim painted in software (bg_row) rather than by LVGL's arcs: always on the
+// layered display, waterfall or not — LVGL redrawing the arcs (~357x357, every
+// meter change) took ~250 ms a pass and starved the rest of the screen.
+static bool s_soft_rim = false;
+alignas(4) static uint16_t s_black_row[360];  // background row with the waterfall off
+static uint16_t *s_spec_px;       // up to WF x WF: the spectrum trace, s_spec_h rows used (PSRAM)
+static uint16_t *s_ring;          // up to WF x WF: waterfall rows, s_wf_rows used (PSRAM)
 static int s_head = 0;            // ring row shown at the top of the waterfall
 alignas(4) static uint16_t s_div_row[WF];  // the divider between the two
 static uint16_t *s_scale_px;      // SCALE_H x WF: frequency scale under the spectrum (PSRAM)
@@ -126,26 +137,28 @@ static void wf_draw_spec(const float *db_px) {
   // Spectrum (upper part): dim gradient fill under a brighter trace.
   const float spec_lo = s_wf_floor - 6, spec_range = 60;
   const uint16_t bg = rgb565(3, 5, 10), line = rgb565(90, 112, 120);
-  static uint16_t fill[SPEC_TOP_H];  // gradient by row, computed once
-  static bool fill_ok = false;
-  if (!fill_ok) {
-    for (int yy = 0; yy < SPEC_TOP_H; yy++) {
-      float t = (float)yy / SPEC_TOP_H;  // 0 top .. 1 bottom
+  const int H = s_spec_h;
+  if (H <= 0) return;
+  static uint16_t fill[WF];  // gradient by row, computed per height
+  static int fill_h = -1;
+  if (fill_h != H) {
+    for (int yy = 0; yy < H; yy++) {
+      float t = (float)yy / H;  // 0 top .. 1 bottom
       fill[yy] = rgb565(5 + 8 * (1 - t), 40 + 50 * (1 - t), 62 + 40 * (1 - t));
     }
-    fill_ok = true;
+    fill_h = H;
   }
-  for (int y = 0; y < SPEC_TOP_H; y++) {
+  for (int y = 0; y < H; y++) {
     uint16_t *r = (uint16_t *)(d + y * stride);
     for (int x = 0; x < WF; x++) r[x] = bg;
   }
   int prev_y = -1;
   for (int x = 0; x < WF; x++) {
     float db = db_px[x];
-    int h = (int)((db - spec_lo) / spec_range * SPEC_TOP_H);
-    h = h < 1 ? 1 : (h > SPEC_TOP_H ? SPEC_TOP_H : h);
-    int y = SPEC_TOP_H - h;
-    for (int yy = y + 1; yy < SPEC_TOP_H; yy++) ((uint16_t *)(d + yy * stride))[x] = fill[yy];
+    int h = (int)((db - spec_lo) / spec_range * H);
+    h = h < 1 ? 1 : (h > H ? H : h);
+    int y = H - h;
+    for (int yy = y + 1; yy < H; yy++) ((uint16_t *)(d + yy * stride))[x] = fill[yy];
     int ya = prev_y < 0 ? y : (prev_y < y ? prev_y : y);
     int yb = prev_y < 0 ? y : (prev_y > y ? prev_y : y);
     for (int yy = ya; yy <= yb; yy++) ((uint16_t *)(d + yy * stride))[x] = line;
@@ -207,12 +220,14 @@ static void wf_line(const float *pts, int n, uint32_t center, uint32_t span) {
   }
   // Waterfall (lower part): the ring's top moves up one row, which becomes
   // the new line; everything older is now one row further down.
-  s_head = (s_head + WF_ROWS - 1) % WF_ROWS;
-  uint16_t *row = s_ring + (size_t)s_head * WF;
-  for (int x = 0; x < WF; x++) {
-    float db = px_db[x];
-    int v = (int)((db - lo) / range * 255);
-    row[x] = s_wf_pal[v < 0 ? 0 : (v > 255 ? 255 : v)];
+  if (s_wf_rows > 0) {
+    s_head = (s_head + s_wf_rows - 1) % s_wf_rows;
+    uint16_t *row = s_ring + (size_t)s_head * WF;
+    for (int x = 0; x < WF; x++) {
+      float db = px_db[x];
+      int v = (int)((db - lo) / range * 255);
+      row[x] = s_wf_pal[v < 0 ? 0 : (v > 255 ? 255 : v)];
+    }
   }
 
   // Spectrum (upper part): morph from what's shown to this line (Smooth),
@@ -251,10 +266,10 @@ static void wf_shift_history(int dx) {
   if (!s_wf_on || !dx) return;
   int n = dx > 0 ? dx : -dx;
   if (n >= WF) n = WF - 1;
-  for (int y = 0; y < SPEC_TOP_H + WF_ROWS; y++) {
+  for (int y = 0; y < s_spec_h + s_wf_rows; y++) {
     // Spectrum rows, then the ring's (order doesn't matter: all of them move)
-    bool spec = y < SPEC_TOP_H;
-    uint16_t *row = spec ? s_spec_px + (size_t)y * WF : s_ring + (size_t)(y - SPEC_TOP_H) * WF;
+    bool spec = y < s_spec_h;
+    uint16_t *row = spec ? s_spec_px + (size_t)y * WF : s_ring + (size_t)(y - s_spec_h) * WF;
     uint16_t edge = spec ? rgb565(3, 5, 10) : 0;
     if (dx > 0) {
       memmove(row + n, row, (WF - n) * 2);
@@ -545,7 +560,7 @@ static void scale_text(int x, const char *t, uint16_t col) {
 
 static int meter_gap_half();
 static void wf_scale_update() {
-  if (!s_wf_on || !s_scale_px) return;
+  if (!s_wf_on || !s_scale_on || !s_scale_px) return;
   if (s_wf_center == s_scale_center && s_wf_span == s_scale_span) return;
   s_scale_center = s_wf_center;
   s_scale_span = s_wf_span;
@@ -600,10 +615,12 @@ static void wf_scale_update() {
 // The display's background, a row at a time: spectrum, divider or ring row,
 // plus the passband, marker and rim where they fall in it.
 static const uint16_t *bg_row(int y, uint16_t *scratch) {
-  const uint16_t *src = y < SPEC_TOP_H ? s_spec_px + (size_t)y * WF
-                        : y < SCALE_Y0 ? s_div_row
-                        : y < WF_Y0    ? s_scale_px + (size_t)(y - SCALE_Y0) * WF
-                                       : s_ring + (size_t)((s_head + y - WF_Y0) % WF_ROWS) * WF;
+  const uint16_t *src = !s_wf_on                      ? s_black_row
+                        : y < s_spec_h                  ? s_spec_px + (size_t)y * WF
+                        : s_scale_on && y < SCALE_Y0    ? s_div_row
+                        : s_scale_on && y < WF_Y0       ? s_scale_px + (size_t)(y - SCALE_Y0) * WF
+                        : s_wf_rows && y >= s_wf_y0     ? s_ring + (size_t)((s_head + y - s_wf_y0) % s_wf_rows) * WF
+                                                        : s_black_row;
   int r0 = s_rim_row[y], r1 = s_rim_row[y + 1];
   bool pb = s_pb_x1 > s_pb_x0, mk = s_mark_x >= 0;
   if (!pb && !mk && r0 == r1) return src;
@@ -632,7 +649,7 @@ static const uint16_t *bg_row(int y, uint16_t *scratch) {
 
 // The rim's values changed: resend just the pixels whose colour changed.
 static void wf_rim_update() {
-  if (!s_wf_on) return;
+  if (!s_soft_rim) return;
   RimSnap n = rim_snap();
   s_rim_dirty = false;
   s_last_compose = millis();
@@ -656,7 +673,7 @@ static void wf_rim_update() {
 
 // One in-between frame of the trace morph: only the spectrum band is resent.
 static void wf_animate() {
-  if (!s_wf_on || !g_settings.ctrl_wf_smooth || !s_have_spec) return;
+  if (!s_wf_on || !s_spec_h || !g_settings.ctrl_wf_smooth || !s_have_spec) return;
   uint32_t now = millis();
   float t = (now - s_anim_t0) / (float)s_anim_dur;
   if (t >= 1.0f && memcmp(s_spec_now, s_spec_to, sizeof(s_spec_now)) == 0) return;  // settled
@@ -666,7 +683,7 @@ static void wf_animate() {
   float e = t * t * (3 - 2 * t);  // ease in-out
   for (int x = 0; x < WF; x++) s_spec_now[x] = s_spec_from[x] + (s_spec_to[x] - s_spec_from[x]) * e;
   wf_draw_spec(s_spec_now);
-  display_mark_dirty(0, 0, WF - 1, SPEC_TOP_H - 1);
+  display_mark_dirty(0, 0, WF - 1, s_spec_h - 1);
 }
 
 static void set_rim(int v) {
@@ -749,7 +766,7 @@ static void send(uint8_t code) {
 // Tell the page how many waterfall lines a second to send (code 96): none
 // is drawn while the background is off, so ask for the minimum then.
 static void send_wf_rate() {
-  int rate = !g_settings.ctrl_waterfall ? 1 : (g_settings.ctrl_wf_smooth ? 10 : 5);
+  int rate = g_settings.ctrl_bg == BG_OFF ? 1 : (g_settings.ctrl_wf_smooth ? 10 : 5);
   s_link->send(DIAL_WF_RATE, (int8_t)rate);
 }
 
@@ -766,7 +783,8 @@ static void confirm_restart() {
 }
 
 static void send_wf_rate();
-static const MenuChoice kOnOff[] = {{"On", 1}, {"Off", 0}};
+static const MenuChoice kBgChoices[] = {
+    {"Off", BG_OFF}, {"Waterfall", BG_WATERFALL}, {"Spectrum", BG_SPECTRUM}, {"Both", BG_BOTH}};
 static const MenuChoice kWfRate[] = {{"Battery\n5/s", 0}, {"Smooth\n10/s", 1}};
 
 static const MenuChoice kStepChoices[] = {{"Auto", 0},      {"10 Hz", 10},   {"100 Hz", 100}, {"500 Hz", 500},
@@ -904,22 +922,22 @@ static const MenuItem kCtrlMenu[] = {
        ui_show_setup("");
      },
      nullptr, 0, is_local},
-    {LV_SYMBOL_IMAGE, "Waterfall background", [] { return (int)g_settings.ctrl_waterfall; },
+    {LV_SYMBOL_IMAGE, "Background", [] { return (int)g_settings.ctrl_bg; },
      [](int v) {
-       g_settings.ctrl_waterfall = v;
+       g_settings.ctrl_bg = (uint8_t)v;
        settings_save();
        send_wf_rate();
        menu_close();
-       controller_create(s_link);  // rebuild with/without it (the link carries on)
+       controller_create(s_link);  // rebuild with the new layout (the link carries on)
      },
-     kOnOff, 2},
-    {LV_SYMBOL_CHARGE, "Waterfall speed", [] { return (int)g_settings.ctrl_wf_smooth; },
+     kBgChoices, 4},
+    {LV_SYMBOL_CHARGE, "Background speed", [] { return (int)g_settings.ctrl_wf_smooth; },
      [](int v) {
        g_settings.ctrl_wf_smooth = v;
        settings_save();
        send_wf_rate();
      },
-     kWfRate, 2, [] { return g_settings.ctrl_waterfall; }},
+     kWfRate, 2, [] { return g_settings.ctrl_bg != BG_OFF; }},
     {LV_SYMBOL_EYE_OPEN, "Centre readout", [] { return (int)g_settings.ctrl_meter; },
      [](int v) {
        g_settings.ctrl_meter = v;
@@ -1208,10 +1226,16 @@ void controller_create(const DialLink *link) {
   s_mark_x = -1;
   s_pb_x0 = s_pb_x1 = 0;
   // Only on the layered display: the compositor pulls the rows (bg_row).
-  s_wf_on = g_settings.ctrl_waterfall && display_layered();
+  s_wf_on = g_settings.ctrl_bg != BG_OFF && display_layered();
+  switch (g_settings.ctrl_bg) {
+    case BG_SPECTRUM: s_spec_h = WF, s_wf_y0 = WF, s_wf_rows = 0, s_scale_on = false; break;
+    case BG_WATERFALL: s_spec_h = 0, s_wf_y0 = 0, s_wf_rows = WF, s_scale_on = false; break;
+    default: s_spec_h = SPEC_TOP_H, s_wf_y0 = WF_Y0, s_wf_rows = WF_ROWS, s_scale_on = true; break;
+  }
   if (s_wf_on && !s_spec_px) {
-    s_spec_px = (uint16_t *)ps_malloc((size_t)SPEC_TOP_H * WF * 2);
-    s_ring = (uint16_t *)ps_malloc((size_t)WF_ROWS * WF * 2);
+    // Full-screen sized, whichever layout: switching never reallocates.
+    s_spec_px = (uint16_t *)ps_malloc((size_t)WF * WF * 2);
+    s_ring = (uint16_t *)ps_malloc((size_t)WF * WF * 2);
     s_scale_px = (uint16_t *)ps_malloc((size_t)SCALE_H * WF * 2);
     if (!s_spec_px || !s_ring || !s_scale_px) {
       free(s_spec_px);
@@ -1221,26 +1245,29 @@ void controller_create(const DialLink *link) {
     }
   }
   if (!s_spec_px) s_wf_on = false;
+  if (display_layered()) rim_table();
+  s_soft_rim = display_layered() && s_rim_px;
+  if (s_soft_rim) {
+    s_rs = RimSnap();
+    display_set_background_rows(bg_row);  // black rows + the rim, or the waterfall's
+  }
   if (s_wf_on) {
     wf_palette();
-    rim_table();
-    s_rs = RimSnap();
     const uint16_t sbg = rgb565(3, 5, 10);
-    for (int i = 0; i < SPEC_TOP_H * WF; i++) s_spec_px[i] = sbg;
-    memset(s_ring, 0, (size_t)WF_ROWS * WF * 2);
+    for (int i = 0; i < s_spec_h * WF; i++) s_spec_px[i] = sbg;
+    memset(s_ring, 0, (size_t)WF * WF * 2);
     for (int x = 0; x < WF; x++) s_div_row[x] = rgb565(14, 20, 34);
     s_scale_center = 1;  // force a repaint
     s_scale_span = 1;
     wf_scale_update();
     s_head = 0;
-    display_set_background_rows(bg_row);
   }
 
-  // With the waterfall on, the arcs live under a hidden host: they keep the
-  // values, the software rim draws them (see bg_row).
+  // With the software rim, the arcs live under a hidden host: they keep the
+  // values, bg_row draws them.
   s_rim_host = nullptr;
   lv_obj_t *rim_parent = s_scr;
-  if (s_wf_on) {
+  if (s_soft_rim) {
     s_rim_host = lv_obj_create(s_scr);
     lv_obj_remove_style_all(s_rim_host);
     lv_obj_set_size(s_rim_host, 360, 360);
@@ -1284,21 +1311,25 @@ void controller_create(const DialLink *link) {
   lv_obj_center(s_live);
   lv_obj_remove_flag(s_live, LV_OBJ_FLAG_SCROLLABLE);
 
-  s_freq = theme_label(s_live, &lv_font_montserrat_40, COL_TEXT, "-.---.---");
-  lv_obj_align(s_freq, LV_ALIGN_TOP_MID, 0, 50);
+  // Waterfall off: nothing behind the top half, so a bigger frequency, lower
+  // down (the round screen is too narrow for 48 px digits any higher), with
+  // the lines under it moved down to suit.
+  const bool big = !s_wf_on;
+  s_freq = theme_label(s_live, big ? &lv_font_montserrat_48 : &lv_font_montserrat_40, COL_TEXT, "-.---.---");
+  lv_obj_align(s_freq, LV_ALIGN_TOP_MID, 0, big ? 74 : 50);
   lv_obj_add_flag(s_freq, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(s_freq, 8);
   lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_SHORT_CLICKED, nullptr);
   lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_LONG_PRESSED, nullptr);
   s_info = theme_label(s_live, &lv_font_montserrat_12, COL_DIM, "");
-  lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, 98);
+  lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, big ? 126 : 98);
 
   s_snr = theme_label(s_live, &lv_font_montserrat_40, COL_DIM, "--");
-  lv_obj_align(s_snr, LV_ALIGN_CENTER, 0, -36);
+  lv_obj_align(s_snr, LV_ALIGN_CENTER, 0, big ? -20 : -36);
   s_snr_cap = theme_label(s_live, &lv_font_montserrat_12, COL_DIM, "SNR dB");
-  lv_obj_align(s_snr_cap, LV_ALIGN_CENTER, 0, -4);
+  lv_obj_align(s_snr_cap, LV_ALIGN_CENTER, 0, big ? 2 : -4);
   s_sql = theme_label(s_live, &lv_font_montserrat_12, COL_DIM, "");
-  lv_obj_align(s_sql, LV_ALIGN_CENTER, 0, 14);
+  lv_obj_align(s_sql, LV_ALIGN_CENTER, 0, big ? 17 : 14);
   meter_apply();
 
   // Drag strip: swipe across the middle to pan the waterfall (and the page's).
@@ -1326,6 +1357,7 @@ void controller_create(const DialLink *link) {
   static const Page kRowOrder[P_COUNT] = {P_TUNE, P_ZOOM, P_SQL, P_BW, P_STEP, P_VOL};  // volume last (right)
   for (int k = 0; k < P_COUNT; k++) {
     int i = kRowOrder[k];
+    if (i == P_ZOOM && !s_wf_on) continue;  // nothing to zoom without the spectrum
     lv_obj_t *b = lv_button_create(row);
     lv_obj_set_size(b, 46, 40);
     lv_obj_set_style_radius(b, 20, 0);
@@ -1412,6 +1444,7 @@ void controller_create(const DialLink *link) {
       s_chip,
       [](lv_event_t *) {
         s_page = (Page)((s_page + 1) % P_COUNT);
+        if (s_page == P_ZOOM && !s_wf_on) s_page = (Page)((s_page + 1) % P_COUNT);
         rim_mode();
       },
       LV_EVENT_SHORT_CLICKED, nullptr);
@@ -1606,7 +1639,7 @@ void controller_tick(int knob) {
   // at most 5/s, and only when something actually changed.
   // The software rim: at most ~30 updates a second, each resending only the
   // pixels that changed (nothing at all when the values didn't).
-  if (s_wf_on && millis() - s_last_compose >= 33 && !saver_spectrum_paused()) wf_rim_update();
+  if (s_soft_rim && millis() - s_last_compose >= 33 && !saver_spectrum_paused()) wf_rim_update();
 
   // Big readout, rim and LEDs
   float snr = s_st.snr;

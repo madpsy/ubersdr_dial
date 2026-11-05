@@ -13,6 +13,10 @@ static const MenuItem *s_items;
 static int s_n;
 static int32_t s_scroll = 0;  // main list scroll, restored when coming back
 static bool s_on_main = false;  // the main list is showing (else a setting's sheet)
+// Open, as far as the caller knows. A setting may close the menu itself (and
+// even rebuild the screen under it): then picking it mustn't reopen the list,
+// which would land on the old screen and leave the new one's overlay set.
+static bool s_open = false;
 
 static void show_main();
 void menu_close();
@@ -137,7 +141,7 @@ static void show_sheet(int idx) {
               intptr_t packed = (intptr_t)lv_event_get_user_data(e);
               const MenuItem &mi = s_items[packed >> 8];
               mi.set(mi.choices[packed & 0xFF].value);
-              show_main();
+              if (s_open) show_main();
             },
             LV_EVENT_CLICKED, (void *)(intptr_t)((idx << 8) | i));
       }
@@ -164,7 +168,7 @@ static void show_sheet(int idx) {
             intptr_t packed = (intptr_t)lv_event_get_user_data(e);
             const MenuItem &mi = s_items[packed >> 8];
             mi.set(mi.choices[packed & 0xFF].value);
-            show_main();
+            if (s_open) show_main();
           },
           LV_EVENT_CLICKED, (void *)(intptr_t)((idx << 8) | i));
       if (on) lv_obj_scroll_to_view(b, LV_ANIM_OFF);
@@ -224,10 +228,12 @@ void menu_open(lv_obj_t *screen, const char *title, uint32_t title_col, const Me
   s_items = items;
   s_n = n;
   s_scroll = 0;
+  s_open = true;
   show_main();
 }
 
 void menu_close() {
+  s_open = false;
   if (s_slot && *s_slot) {
     lv_obj_delete(*s_slot);
     *s_slot = nullptr;

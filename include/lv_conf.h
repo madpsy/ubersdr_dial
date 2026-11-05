@@ -27,6 +27,7 @@
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_MONTSERRAT_40 1
+#define LV_FONT_MONTSERRAT_48 1  // frequency with the waterfall off
 #define LV_FONT_DEFAULT &lv_font_montserrat_16
 
 #define LV_USE_CANVAS 1

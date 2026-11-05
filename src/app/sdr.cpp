@@ -64,6 +64,11 @@ static uint32_t s_last_frame = 0;
 static uint32_t s_gen = 0;
 static uint32_t s_connect_started = 0;
 static bool s_registered = false;  // /connection accepted for s_session
+// The spectrum socket is only open while something shows the spectrum: the
+// session (and the audio on it) doesn't need it. Off: no socket, and the
+// receiver's coverage comes from /api/description instead of its config.
+static bool s_want_spec = true;
+static bool s_closing = false;  // our own disconnect: not a drop
 
 static String make_uuid() {
   uint8_t b[16];
@@ -141,6 +146,33 @@ static bool post_connection(String *why) {
     return false;
   }
   return true;
+}
+
+// GET /api/description: the receiver's coverage (tuning_range.max_frequency),
+// for when there's no spectrum socket to send its config. A receiver that
+// doesn't publish it covers 10 kHz - 30 MHz (the server's own fallback).
+static uint32_t fetch_max_hz() {
+  String url = String(s_tls ? "https://" : "http://") + s_host + ":" + s_port + s_path_prefix + "api/description";
+  WiFiClientSecure tls;
+  WiFiClient plain;
+  tls.setInsecure();
+  HTTPClient http;
+  http.setTimeout(10000);
+  http.setUserAgent("UberSDR-Dial/0.1");
+  uint32_t hz = 0;
+  if (s_tls ? http.begin(tls, url) : http.begin(plain, url)) {
+    if (http.GET() == 200) {
+      JsonDocument filter;
+      filter["tuning_range"]["max_frequency"] = true;
+      JsonDocument doc;
+      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter)))
+        hz = doc["tuning_range"]["max_frequency"] | 0.0;
+    }
+    http.end();
+  }
+  if (!hz) hz = 30000000;
+  Serial.printf("[sdr] coverage from description: 0..%u Hz\n", (unsigned)hz);
+  return hz;
 }
 
 // ---------------------------------------------------------------- decoding
@@ -274,12 +306,14 @@ static void ws_event(WStype_t type, uint8_t *payload, size_t length) {
       UNLOCK();
       break;
     case WStype_DISCONNECTED:
+      if (s_closing) break;  // we closed it (spectrum no longer wanted)
       Serial.printf("[sdr] websocket disconnected (%.*s), heap %u internal %u\n", (int)length,
                     payload ? (const char *)payload : "", (unsigned)ESP.getFreeHeap(),
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
       s_restart = true;
       break;
     case WStype_ERROR:
+      if (s_closing) break;
       Serial.printf("[sdr] websocket error (%.*s)\n", (int)length, payload ? (const char *)payload : "");
       s_restart = true;
       break;
@@ -313,9 +347,24 @@ static void start_session() {
     return;
   }
   LOCK();
+  bool need_max = !s_want_spec && !s_max_hz;
+  bool want_spec = s_want_spec;
+  UNLOCK();
+  uint32_t max_hz = need_max ? fetch_max_hz() : 0;
+  LOCK();
+  if (max_hz) s_max_hz = max_hz;
   s_gen++;
   s_registered = true;  // audio may start now, in parallel with the spectrum handshake
+  if (!want_spec) {     // the session is all there is: it's up
+    s_state = SdrState::Connected;
+    s_status = "live";
+    s_attempt = 0;
+  }
   UNLOCK();
+}
+
+// Open the spectrum socket on the registered session.
+static void open_spectrum() {
   s_connect_started = millis();
   Serial.printf("[sdr] opening spectrum socket, internal heap %u (largest %u)\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -379,9 +428,53 @@ static void sdr_task(void *) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
-    if (!s_ws_started) {
+    LOCK();
+    bool registered = s_registered, want_spec = s_want_spec;
+    UNLOCK();
+    if (!registered) {
+      if (s_ws_started) {  // a restart: the old session's socket goes with it
+        s_closing = true;
+        s_ws.disconnect();
+        s_closing = false;
+        s_ws_started = false;
+      }
       if ((int32_t)(millis() - retry_at) >= 0) start_session();
       else vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    if (want_spec && !s_ws_started) {
+      open_spectrum();
+      continue;
+    }
+    if (!want_spec && s_ws_started) {
+      Serial.println("[sdr] spectrum not wanted: closing its socket (the session stays)");
+      s_closing = true;
+      s_ws.disconnect();
+      s_closing = false;
+      s_ws_started = false;
+      LOCK();
+      s_state = SdrState::Connected;
+      s_status = "live";
+      s_new_frame = false;
+      s_fps = 0;
+      s_fps_at = s_fps_n = 0;
+      s_last_frame = 0;
+      UNLOCK();
+      continue;
+    }
+    if (!s_ws_started) {  // session only: watch for restarts (sdr_restart_session)
+      LOCK();
+      if (s_restart) {
+        s_restart = false;
+        s_registered = false;
+        uint32_t backoff = 1000u << (s_attempt < 4 ? s_attempt : 4);
+        if (s_attempt < 255) s_attempt++;
+        s_retry_at = millis() + backoff;
+        s_state = SdrState::Connecting;
+        s_status = "reconnecting (" + String(s_attempt) + ")";
+      }
+      UNLOCK();
+      vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
     uint32_t t0 = millis();
@@ -434,7 +527,9 @@ static void sdr_task(void *) {
     }
     UNLOCK();
     if (restart) {
+      s_closing = true;
       s_ws.disconnect();
+      s_closing = false;
       s_ws_started = false;
       continue;
     }
@@ -467,6 +562,22 @@ void sdr_disconnect() {
   s_req_gen++;
   s_state = SdrState::Idle;
   s_status = "";
+  UNLOCK();
+}
+
+void sdr_set_spectrum(bool on) {
+  LOCK();
+  if (on != s_want_spec) {
+    s_want_spec = on;
+    // Back on: a fresh socket on the same session, measured from scratch.
+    if (on) s_state = s_registered ? SdrState::Connecting : s_state;
+  }
+  UNLOCK();
+}
+
+void sdr_restart_session() {
+  LOCK();
+  if (s_registered) s_restart = true;
   UNLOCK();
 }
 

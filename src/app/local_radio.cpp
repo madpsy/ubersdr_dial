@@ -5,6 +5,7 @@
 #include "../hw/led_ring.h"
 #include "../ui/theme.h"
 #include "audio.h"
+#include "saver.h"
 #include "sdr.h"
 #include "settings.h"
 
@@ -288,7 +289,9 @@ static void lr_send(uint8_t code, int8_t v) {
     case DIAL_ZOOM_IN: set_zoom(s_zoom_idx + 1); break;
     case DIAL_ZOOM_OUT: set_zoom(s_zoom_idx - 1); break;
     case DIAL_ZOOM_RESET: set_zoom(0); break;
-    case DIAL_WF_RATE: s_wf_rate = v < 1 ? 1 : (v > 30 ? 30 : v); break;
+    case DIAL_WF_RATE:
+      s_wf_rate = v < 1 ? 1 : (v > 30 ? 30 : v);
+      break;
     case DIAL_PAN: {
       // The picture moved right by v of 360 px: the view moves left as much.
       int64_t c = (int64_t)s_center - (int64_t)v * s_span / 360;
@@ -346,6 +349,10 @@ static void pick_divisor() {
   }
 }
 
+// The spectrum socket is open only while something draws it: the waterfall is
+// on, and the screen saver isn't pausing it (screen off or "Spectrum off").
+static bool want_spectrum() { return g_settings.ctrl_bg != BG_OFF && !saver_spectrum_paused(); }
+
 static void lr_loop() {
   if (!s_running) return;
   uint32_t now = millis();
@@ -356,7 +363,9 @@ static void lr_loop() {
     view_changed();
   }
   // Audio follows the spectrum session (same user_session_id).
-  SdrSession ss;
+  bool spec = want_spectrum();
+  sdr_set_spectrum(spec);  // change-only inside
+  SdrSession ss{};  // gen 0 until there is one
   extern bool g_led_disabled;  // debug quiet mode also keeps audio off
   if (sdr_session(&ss) && !g_led_disabled && (ss.gen != s_audio_gen || !audio_has_session())) {
     s_audio_gen = ss.gen;
@@ -365,6 +374,20 @@ static void lr_loop() {
     audio_tune(s_tune, cur_mode().id, lo, hi);
     audio_set_squelch(g_settings.squelch_db);
     audio_set_session(ss.host, ss.port, ss.tls, ss.path_prefix, ss.uuid, ss.gen);
+  }
+  // Without the spectrum socket nothing else notices a session the server has
+  // dropped (its own watchdog restarts on 10 s without frames): audio silent
+  // for 20 s on a session -> register a fresh one.
+  {
+    static uint32_t ok_at = 0, ok_gen = 0;
+    if (audio_live() || ss.gen != ok_gen || g_led_disabled || spec) {
+      ok_at = now;
+      ok_gen = ss.gen;
+    } else if (now - ok_at > 20000) {
+      Serial.println("[radio] no audio for 20 s without a spectrum socket: new session");
+      ok_at = now;
+      sdr_restart_session();
+    }
   }
   // SNR for the audio coming out of the speaker now, published ~20x a second.
   if (now - s_snr_pub_at >= 50) {
@@ -491,6 +514,8 @@ void local_radio_start() {
   s_saved = true;
   s_div = 1;
   sdr_set_rate(1);  // measure the full rate first; pick_divisor() slows it
+  // No spectrum socket while the waterfall is off: audio needs only the session.
+  sdr_set_spectrum(want_spectrum());
   sdr_connect(g_settings.inst_url);
   build_state();
 }

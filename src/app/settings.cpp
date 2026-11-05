@@ -71,7 +71,10 @@ void settings_load() {
   s_prefs.getBytes("bw", g_settings.bw_hz, sizeof(g_settings.bw_hz));
   g_settings.haptics = s_prefs.getBool("hap", true);
   g_settings.start_mode = s_prefs.getUChar("smode", 0);
-  g_settings.ctrl_waterfall = s_prefs.getBool("cwf", true);
+  // "cbg" replaced the on/off "cwf": on was both, off was off.
+  g_settings.ctrl_bg = s_prefs.isKey("cbg") ? s_prefs.getUChar("cbg", BG_BOTH)
+                                            : (s_prefs.getBool("cwf", true) ? BG_BOTH : BG_OFF);
+  if (g_settings.ctrl_bg > BG_BOTH) g_settings.ctrl_bg = BG_BOTH;
   g_settings.ctrl_wf_smooth = s_prefs.getBool("cwfs", false);
   g_settings.ctrl_meter = s_prefs.getUChar("cmtr", 0);
   g_settings.tune_locked = s_prefs.getBool("lock", false);
@@ -95,7 +98,7 @@ void settings_save() {
   s_prefs.putUChar("bl", g_settings.brightness);
   s_prefs.putBool("hap", g_settings.haptics);
   s_prefs.putUChar("smode", g_settings.start_mode);
-  s_prefs.putBool("cwf", g_settings.ctrl_waterfall);
+  s_prefs.putUChar("cbg", g_settings.ctrl_bg);
   s_prefs.putBool("cwfs", g_settings.ctrl_wf_smooth);
   s_prefs.putUChar("cmtr", g_settings.ctrl_meter);
   s_prefs.putBool("lock", g_settings.tune_locked);
