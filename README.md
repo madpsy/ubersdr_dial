@@ -162,3 +162,10 @@ To stage the binaries without releasing, run `./build.sh` on its own. The page i
 | `partitions_dial.csv` | Flash layout: the 16 MB default plus a `usercfg` slot for the web flasher |
 | `docs/flash/` | Browser flasher (GitHub Pages) |
 | `docs/PROTOCOL.md` | Controller protocol: the records, and how Bluetooth and USB carry them |
+
+## License
+
+UberSDR Dial is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See [LICENSE](LICENSE) for the full text.
