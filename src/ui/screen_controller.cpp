@@ -3,7 +3,7 @@
 // (controller mode) or from the dial's own receiver (local_radio, Wi-Fi).
 //
 //   knob        : sent to the page on the current page (TUNE/VOL/ZOOM/SQL/BW)
-//   tap chip    : next knob page          hold chip: menu
+//   tap chip    : next knob page          cog (right of it): menu
 //   tap/hold mode, frequency, mute: sent to the page (mapped in SDR Control)
 #include <math.h>
 #include <stdarg.h>
@@ -58,7 +58,7 @@ static const uint32_t kPageCol[P_COUNT] = {COL_ACCENT, COL_OK, COL_ACCENT2, COL_
 static constexpr int SQL_LO = -11, SQL_HI = 46;  // v2 squelch slider range
 
 static lv_obj_t *s_scr, *s_dot, *s_status, *s_freq, *s_info, *s_snr, *s_snr_cap, *s_sql, *s_mode_lbl, *s_mute_lbl,
-    *s_chip, *s_chip_lbl, *s_rim, *s_mark, *s_live, *s_wait, *s_wait_name, *s_overlay;
+    *s_chip, *s_chip_lbl, *s_cog, *s_rim, *s_mark, *s_live, *s_wait, *s_wait_name, *s_overlay;
 static Page s_page = P_TUNE;
 static lv_obj_t *s_page_btn[P_COUNT];
 static const char *kPageName[P_COUNT] = {"TUNE", "VOL", "ZOOM", "SQL", "BW", "STEP"};
@@ -704,11 +704,143 @@ static void fmt_hz(char *out, size_t n, uint32_t hz) {
   else snprintf(out, n, "%u Hz", (unsigned)hz);
 }
 
+// ---------------------------------------------------------------- digit tuning
+// Tap a digit of the frequency: the knob tunes in that digit's steps (the step
+// is set on the far end, so v2 and receiver mode both do it), and the digit is
+// lit. Tap it again, or anywhere else, and the old step comes back.
+static int s_digit = -1;                 // place selected (0 = 1 Hz), -1 = none
+static uint32_t s_digit_prev_step = 0;   // the step before
+static bool s_digit_prev_auto = false;   // receiver mode's automatic step, before
+static int s_digit_mult = 1;             // detents per knob click for this place
+
+static uint32_t pow10u(int p) {
+  uint32_t v = 1;
+  while (p-- > 0) v *= 10;
+  return v;
+}
+
+// The far end's steps stop at 100 kHz: above that, several of them a click.
+static int digit_step_idx(int place, int *mult) {
+  uint32_t want = pow10u(place);
+  int best = 0;
+  for (int i = 0; i < kDialNumSteps; i++) {
+    uint32_t st = kDialSteps[i], p = 1;
+    while (p < st) p *= 10;
+    if (p == st && st <= want) best = i;  // largest power-of-ten step up to the digit
+  }
+  *mult = (int)(want / kDialSteps[best]);
+  return best;
+}
+
+// Light the selected digit (label selection: drawn in LV_PART_SELECTED).
+// Change-only: LVGL's selection setters redraw the label every call, and this
+// runs on every state update (~20 a second) — that redraw stuttered the waterfall.
+static void digit_sel(uint32_t a, uint32_t b) {
+  if (lv_label_get_text_selection_start(s_freq) == a && lv_label_get_text_selection_end(s_freq) == b) return;
+  lv_label_set_text_selection_start(s_freq, a);
+  lv_label_set_text_selection_end(s_freq, b);
+}
+
+static void digit_show() {
+  if (!s_freq) return;
+  const uint32_t OFF = LV_LABEL_TEXT_SELECTION_OFF;
+  if (s_digit < 0) return digit_sel(OFF, OFF);
+  const char *t = lv_label_get_text(s_freq);
+  int len = strlen(t), place = 0;
+  for (int i = len - 1; i >= 0; i--) {
+    if (t[i] < '0' || t[i] > '9') continue;
+    if (place == s_digit) return digit_sel(i, i + 1);
+    place++;
+  }
+  digit_sel(OFF, OFF);  // the number got shorter than the place (tuned down past it)
+}
+
+static void digit_restore_step() {
+  if (s_digit_prev_auto) {
+    s_link->send(DIAL_STEP_AUTO, 1);
+    return;
+  }
+  for (int i = 0; i < kDialNumSteps; i++)
+    if (kDialSteps[i] == s_digit_prev_step) {
+      s_link->send(DIAL_STEP0 + i, 1);
+      return;
+    }
+}
+
+static void update_chip();
+static void rim_mode();
+static void digit_exit() {
+  if (s_digit < 0) return;
+  s_digit = -1;
+  digit_restore_step();
+  digit_show();
+  update_chip();
+}
+
+static void digit_enter(int place) {
+  if (s_digit < 0) {  // coming from normal tuning: remember its step
+    s_digit_prev_step = s_st.step_hz;
+    s_digit_prev_auto = s_link->local && g_settings.step_hz == 0;
+  }
+  s_digit = place;
+  int idx = digit_step_idx(place, &s_digit_mult);
+  s_link->send(DIAL_STEP0 + idx, 1);
+  s_page = P_TUNE;
+  rim_mode();
+  digit_show();
+  update_chip();
+}
+
+// A tap on the frequency: which digit (place from the right), or -1.
+static int digit_at_tap() {
+  lv_indev_t *in = lv_indev_active();
+  if (!in || !s_st.valid) return -1;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  lv_area_t a;
+  lv_obj_get_coords(s_freq, &a);
+  lv_point_t pos = {p.x - a.x1, lv_area_get_height(&a) / 2};
+  int w = lv_area_get_width(&a);
+  pos.x = pos.x < 0 ? 0 : (pos.x >= w ? w - 1 : pos.x);
+  const char *t = lv_label_get_text(s_freq);
+  int len = strlen(t);
+  int idx = (int)lv_label_get_letter_on(s_freq, &pos, false);
+  if (idx >= len) idx = len - 1;
+  if (idx < 0) return -1;
+  if (t[idx] < '0' || t[idx] > '9') idx++;  // a separator: the digit after it
+  if (idx >= len || t[idx] < '0' || t[idx] > '9') return -1;
+  int place = 0;
+  for (int i = idx + 1; i < len; i++)
+    if (t[i] >= '0' && t[i] <= '9') place++;
+  return place;
+}
+
+// Any press while a digit is lit, other than on the frequency: back to normal,
+// and that press does nothing else.
+static void digit_indev_cb(lv_event_t *e) {
+  if (s_digit < 0 || lv_screen_active() != s_scr) return;
+  lv_obj_t *target = (lv_obj_t *)lv_event_get_param(e);
+  if (target == s_freq) return;
+  digit_exit();
+  lv_indev_t *in = lv_indev_active();
+  if (in) {
+    lv_indev_stop_processing(in);
+    lv_indev_wait_release(in);
+  }
+}
+
 static void update_chip() {
   char v[32];
   int w = abs(s_st.bw_hi - s_st.bw_lo);
   switch (s_page) {
-    case P_TUNE: set_text(s_chip_lbl, LV_SYMBOL_SHUFFLE "  TUNE"); break;
+    case P_TUNE:
+      if (s_digit >= 0) {
+        fmt_hz(v, sizeof(v), pow10u(s_digit));
+        set_textf(s_chip_lbl, LV_SYMBOL_SHUFFLE "  %s", v);
+      } else {
+        set_text(s_chip_lbl, LV_SYMBOL_SHUFFLE "  TUNE");
+      }
+      break;
     case P_ZOOM: set_text(s_chip_lbl, LV_SYMBOL_PLUS "  ZOOM"); break;
     case P_VOL: set_textf(s_chip_lbl, LV_SYMBOL_VOLUME_MAX "  %d", s_st.muted ? 0 : s_st.volume); break;
     case P_SQL:
@@ -844,7 +976,14 @@ static int meter_gap_half() {
   return lv_text_get_width(widest, strlen(widest), &lv_font_montserrat_40, 0) / 2 + 4;
 }
 
+// What the readout shows now (cleared by meter_apply: a rebuilt screen's new
+// labels start blank, so the next value must be drawn, not skipped as "same").
+static char s_meter_last[32] = "";
+static uint32_t s_meter_last_col = 0, s_meter_at = 0;
+static uint8_t s_meter_last_mode = 255;
+
 static void meter_apply() {
+  s_meter_last_mode = 255;  // redraw on the next pass
   bool on = g_settings.ctrl_meter != METER_OFF;
   for (lv_obj_t *o : {s_snr, s_snr_cap, s_sql}) {
     if (!o) continue;
@@ -855,9 +994,9 @@ static void meter_apply() {
 }
 
 static void meter_render() {
-  static char last[32] = "";
-  static uint32_t last_col = 0;
-  static uint8_t last_mode = 255;
+  char *last = s_meter_last;
+  uint32_t &last_col = s_meter_last_col;
+  uint8_t &last_mode = s_meter_last_mode;
   uint8_t mode = g_settings.ctrl_meter;
   if (mode == METER_OFF) {
     last_mode = mode;
@@ -892,6 +1031,10 @@ static void meter_render() {
   char key[32];
   snprintf(key, sizeof key, "%s|%s", val, cap);
   if (mode == last_mode && col == last_col && !strcmp(key, last)) return;
+  // At most 5 a second (a mode change at once): each change redraws the
+  // label over the waterfall, and the value moves on nearly every pass.
+  if (mode == last_mode && millis() - s_meter_at < 200) return;
+  s_meter_at = millis();
   last_mode = mode;
   last_col = col;
   strcpy(last, key);
@@ -1215,6 +1358,16 @@ void controller_create(const DialLink *link) {
     display_set_background(nullptr, 0);
   }
   s_page = P_TUNE;
+  if (s_digit >= 0) {  // rebuilt mid digit-tuning: put the step back
+    s_digit = -1;
+    digit_restore_step();
+  }
+  static bool indev_hooked = false;
+  if (!indev_hooked) {
+    for (lv_indev_t *in = lv_indev_get_next(nullptr); in; in = lv_indev_get_next(in))
+      if (lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER) lv_indev_add_event_cb(in, digit_indev_cb, LV_EVENT_PRESSED, nullptr);
+    indev_hooked = true;
+  }
   s_st = DialState();
 
   // Waterfall background (bottom-most), optional
@@ -1319,8 +1472,26 @@ void controller_create(const DialLink *link) {
   lv_obj_align(s_freq, LV_ALIGN_TOP_MID, 0, big ? 74 : 50);
   lv_obj_add_flag(s_freq, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(s_freq, 8);
-  lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_SHORT_CLICKED, nullptr);
-  lv_obj_add_event_cb(s_freq, [](lv_event_t *) { open_band_picker(); }, LV_EVENT_LONG_PRESSED, nullptr);
+  // Tap a digit: tune in its steps (again: back to normal). Hold: band picker.
+  lv_obj_add_event_cb(
+      s_freq,
+      [](lv_event_t *) {
+        int place = digit_at_tap();
+        if (place < 0) return;
+        if (place == s_digit) digit_exit();
+        else digit_enter(place);
+      },
+      LV_EVENT_SHORT_CLICKED, nullptr);
+  lv_obj_add_event_cb(
+      s_freq,
+      [](lv_event_t *) {
+        digit_exit();
+        open_band_picker();
+      },
+      LV_EVENT_LONG_PRESSED, nullptr);
+  // The lit digit: bright tune colour on a dark teal box.
+  lv_obj_set_style_text_color(s_freq, C(COL_ACCENT), LV_PART_SELECTED);
+  lv_obj_set_style_bg_color(s_freq, C(0x0b3b44), LV_PART_SELECTED);
   s_info = theme_label(s_live, &lv_font_montserrat_12, COL_DIM, "");
   lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, big ? 126 : 98);
 
@@ -1437,9 +1608,12 @@ void controller_create(const DialLink *link) {
   lv_obj_add_event_cb(rst, [](lv_event_t *) { confirm_restart(); }, LV_EVENT_CLICKED, nullptr);
 
   // Knob page chip
+  // Knob page chip (tap: next page), and the menu's own cog button to its
+  // right. Side by side in the rim's gap at the bottom: the pair is centred,
+  // and sits a little higher than one centred chip would, to clear the edge.
   s_chip = theme_pill(s_scr, "", COL_ACCENT, 124, 38);
   s_chip_lbl = lv_obj_get_child(s_chip, 0);
-  lv_obj_align(s_chip, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_align(s_chip, LV_ALIGN_BOTTOM_MID, -22, -18);
   lv_obj_add_event_cb(
       s_chip,
       [](lv_event_t *) {
@@ -1448,7 +1622,9 @@ void controller_create(const DialLink *link) {
         rim_mode();
       },
       LV_EVENT_SHORT_CLICKED, nullptr);
-  lv_obj_add_event_cb(s_chip, [](lv_event_t *) { open_menu(); }, LV_EVENT_LONG_PRESSED, nullptr);
+  s_cog = theme_pill(s_scr, LV_SYMBOL_SETTINGS, COL_DIM, 38, 38);
+  lv_obj_align(s_cog, LV_ALIGN_BOTTOM_MID, 66, -18);
+  lv_obj_add_event_cb(s_cog, [](lv_event_t *) { open_menu(); }, LV_EVENT_CLICKED, nullptr);
 
   // Rim touch: full screen, but it only claims touches near the squelch notch
   // (custom hit test), so everything under it works as before.
@@ -1478,6 +1654,7 @@ static void render_state() {
   uint32_t hz = s_st.freq_hz;
   snprintf(f, sizeof(f), "%u.%03u.%03u", (unsigned)(hz / 1000000), (unsigned)(hz / 1000 % 1000), (unsigned)(hz % 1000));
   set_text(s_freq, f);
+  digit_show();  // the digit's position may have moved (one more or fewer digits)
   fmt_hz(a, sizeof(a), s_st.step_hz * s_accel);
   int w = abs(s_st.bw_hi - s_st.bw_lo);
   fmt_hz(b, sizeof(b), w);
@@ -1512,9 +1689,10 @@ void controller_tick(int knob) {
     hid = g_dbg_hide_ui;
     if (hid) lv_obj_add_flag(s_live, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_remove_flag(s_live, LV_OBJ_FLAG_HIDDEN);
-    if (s_chip) {
-      if (hid) lv_obj_add_flag(s_chip, LV_OBJ_FLAG_HIDDEN);
-      else lv_obj_remove_flag(s_chip, LV_OBJ_FLAG_HIDDEN);
+    for (lv_obj_t *o : {s_chip, s_cog}) {
+      if (!o) continue;
+      if (hid) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
     }
   }
   // Debug timing: where a pass goes (printed every 5 s).
@@ -1568,7 +1746,17 @@ void controller_tick(int knob) {
   // Knob -> page (the page does the work; the dial only shows the result)
   if (knob && !s_overlay && conn && !(s_page == P_TUNE && s_st.locked)) {
     int n = knob;
-    if (s_page == P_TUNE) {
+    if (s_page != P_TUNE) digit_exit();  // tuning by digit is a tune-page thing
+    if (s_page == P_TUNE && s_digit >= 0) {
+      // By digit: no acceleration; above 100 kHz, several steps a click.
+      int total = n * s_digit_mult;
+      while (total) {
+        int c = total > 127 ? 127 : (total < -127 ? -127 : total);
+        s_link->send(kPageCode[P_TUNE], (int8_t)c);
+        total -= c;
+      }
+      n = 0;
+    } else if (s_page == P_TUNE) {
       // Spin faster -> bigger steps (same thresholds as receiver mode). Sent as
       // more detents: v2's stepBy lands them on the step grid.
       int a = knob_accel();
@@ -1578,7 +1766,7 @@ void controller_tick(int knob) {
       }
       n *= a;
     }
-    s_link->send(kPageCode[s_page], (int8_t)(n > 127 ? 127 : (n < -127 ? -127 : n)));
+    if (n) s_link->send(kPageCode[s_page], (int8_t)(n > 127 ? 127 : (n < -127 ? -127 : n)));
   }
   if (s_accel > 1 && knob_idle_ms() > 400) {
     s_accel = 1;

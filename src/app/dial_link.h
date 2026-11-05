@@ -39,6 +39,7 @@ enum : uint8_t {
   DIAL_WF_RATE = 96,   // value: waterfall lines a second wanted
   DIAL_PAN = 97,       // value: drag, px of 360 (content moved right = +)
   DIAL_TAP_TUNE = 98,  // value: -127..127 across the view
+  DIAL_STEP_AUTO = 99, // receiver mode only: tuning step back to automatic (from the span)
 };
 
 // v2's TUNING_STEPS (index = code - DIAL_STEP0) and band list (code - DIAL_BAND0).

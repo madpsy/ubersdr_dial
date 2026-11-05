@@ -65,11 +65,14 @@ Both modes share the same screen:
 - **Knob:** turns whatever page is selected: tune, volume, zoom, squelch,
   bandwidth or step size. Turning faster while tuning makes bigger steps.
 - **Page buttons:** jump straight to a page.
-- **Chip at the bottom:** tap for the next page, hold for the menu.
+- **Chip at the bottom:** tap for the next page.
+- **Cog (right of the chip):** opens the menu.
 - **Waterfall:** drag to pan, tap to tune.
 - **SNR ring:** shows signal strength around the edge. Drag the squelch notch
   along it to set squelch.
-- **Frequency:** tap to open the band picker.
+- **Frequency:** tap a digit to tune in that digit's steps (it lights up;
+  tap it again or anywhere else to go back to normal). Hold for the band
+  picker.
 - **Mode button:** tap to step through modes, hold for the mode picker.
 - **Volume button:** tap to mute.
 - **Padlock:** locks tuning.

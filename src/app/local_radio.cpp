@@ -314,7 +314,10 @@ static void lr_send(uint8_t code, int8_t v) {
     default:
       if (code >= DIAL_MODE0 && code < DIAL_MODE0 + kCycleModes) set_mode_v2(code - DIAL_MODE0);
       else if (code >= DIAL_BAND0 && code < DIAL_BAND0 + kDialNumBands) go_band(code - DIAL_BAND0);
-      else if (code >= DIAL_STEP0 && code < DIAL_STEP0 + kDialNumSteps) {
+      else if (code == DIAL_STEP_AUTO) {
+        g_settings.step_hz = 0;
+        touched();
+      } else if (code >= DIAL_STEP0 && code < DIAL_STEP0 + kDialNumSteps) {
         g_settings.step_hz = kDialSteps[code - DIAL_STEP0];
         touched();
       }
