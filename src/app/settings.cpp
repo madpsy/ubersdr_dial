@@ -73,6 +73,7 @@ void settings_load() {
   g_settings.start_mode = s_prefs.getUChar("smode", 0);
   g_settings.ctrl_waterfall = s_prefs.getBool("cwf", true);
   g_settings.ctrl_wf_smooth = s_prefs.getBool("cwfs", false);
+  g_settings.ctrl_meter = s_prefs.getUChar("cmtr", 0);
   g_settings.tune_locked = s_prefs.getBool("lock", false);
   g_settings.saver_mode = s_prefs.getUChar("svm", 0);
   g_settings.saver_secs = s_prefs.getUShort("svs", 120);
@@ -96,6 +97,7 @@ void settings_save() {
   s_prefs.putUChar("smode", g_settings.start_mode);
   s_prefs.putBool("cwf", g_settings.ctrl_waterfall);
   s_prefs.putBool("cwfs", g_settings.ctrl_wf_smooth);
+  s_prefs.putUChar("cmtr", g_settings.ctrl_meter);
   s_prefs.putBool("lock", g_settings.tune_locked);
   s_prefs.putUChar("svm", g_settings.saver_mode);
   s_prefs.putUShort("svs", g_settings.saver_secs);

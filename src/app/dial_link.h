@@ -15,6 +15,7 @@ struct DialState {
   uint32_t freq_hz = 0;
   uint8_t mode = 255;  // index into the v2 mode table (kV2Modes)
   float snr = NAN;     // NAN = no reading
+  float dbfs = NAN;    // baseband power, dBFS (what v2's S-meter shows); NAN = no reading
   bool audio_up = false, sql_on = false, sql_open = false, muted = false, locked = false;
   uint8_t volume = 0;  // 0..100
   float sql_db = NAN;  // threshold; NAN = off

@@ -23,3 +23,4 @@ bool audio_has_session();  // false after audio_stop()
 bool audio_live();      // frames arriving
 float audio_snr_db();          // latest reading received; NAN when unknown
 float audio_snr_db_playing();  // reading for the audio coming out of the speaker now
+float audio_dbfs_playing();    // its baseband power, dBFS (the S-meter's input); NAN when unknown

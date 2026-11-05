@@ -12,6 +12,10 @@ static uint32_t s_title_col;
 static const MenuItem *s_items;
 static int s_n;
 static int32_t s_scroll = 0;  // main list scroll, restored when coming back
+static bool s_on_main = false;  // the main list is showing (else a setting's sheet)
+
+static void show_main();
+void menu_close();
 
 static lv_obj_t *new_overlay() {
   if (*s_slot) lv_obj_delete(*s_slot);
@@ -23,6 +27,18 @@ static lv_obj_t *new_overlay() {
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
   lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+  // A tap on the background, outside the list and buttons: closes the menu,
+  // or from a setting's sheet goes back to the list (as its close button).
+  // Presses that start on the list or a button are theirs, so scrolling the
+  // list never lands here.
+  lv_obj_add_event_cb(
+      o,
+      [](lv_event_t *e) {
+        if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+        if (s_on_main) menu_close();
+        else show_main();
+      },
+      LV_EVENT_SHORT_CLICKED, nullptr);
   *s_slot = o;
   s_list = nullptr;
   return o;
@@ -53,8 +69,6 @@ static const char *value_label(const MenuItem &it) {
   return "";
 }
 
-static void show_main();
-
 static lv_obj_t *close_button(lv_obj_t *o, int y, lv_event_cb_t cb) {
   lv_obj_t *x = lv_button_create(o);
   lv_obj_set_size(x, 44, 44);
@@ -74,6 +88,7 @@ static lv_obj_t *close_button(lv_obj_t *o, int y, lv_event_cb_t cb) {
 static void show_sheet(int idx) {
   const MenuItem &it = s_items[idx];
   lv_obj_t *o = new_overlay();
+  s_on_main = false;
   int cur = it.get ? it.get() : 0;
   if (it.n_choices <= 6) {
     // Round choices on the rim, title and back in the middle.
@@ -160,6 +175,7 @@ static void show_sheet(int idx) {
 
 static void show_main() {
   lv_obj_t *o = new_overlay();
+  s_on_main = true;
   lv_obj_t *t = theme_label(o, &lv_font_montserrat_14, s_title_col, s_title);
   lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 26);
   lv_obj_t *list = lv_list_create(o);

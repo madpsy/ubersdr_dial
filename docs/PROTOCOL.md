@@ -40,13 +40,13 @@ travel together.
 | 1–4 | Frequency in Hz, u32 |
 | 5 | Mode index, 255 = unknown |
 | 6 | SNR in dB, i8; −128 = no reading |
-| 7 | Flags: b0 audio up, b1 squelch on, b2 squelch open, b3 muted, b4 tuning locked |
+| 7 | Flags: b0 audio up, b1 squelch on, b2 squelch open, b3 muted, b4 tuning locked, b5 bytes 18–19 hold the signal level |
 | 8 | Volume, 0–100 |
 | 9 | Squelch threshold in dB, i8; −128 = off |
 | 10–11 | Passband low edge in Hz, i16 |
 | 12–13 | Passband high edge in Hz, i16 |
 | 14–17 | Tuning step in Hz, u32 |
-| 18–19 | Reserved |
+| 18–19 | Signal level (baseband power) in dBFS × 100, i16, valid when flag b5 is set. The dial's S-meter and dBFS readouts use it. Older pages leave these zero and b5 clear. |
 
 ### Name (page → dial)
 

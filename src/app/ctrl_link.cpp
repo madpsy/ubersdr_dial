@@ -42,6 +42,9 @@ void ctrl_rx_state(const uint8_t *p, size_t n) {
   s.bw_lo = le16(p + 10);
   s.bw_hi = le16(p + 12);
   s.step_hz = le32(p + 14);
+  // Flag b5: bytes 18-19 hold the baseband power, dBFS x 100 (older pages
+  // leave them zero and the flag clear).
+  if (n >= 20 && (p[7] & 32)) s.dbfs = (int16_t)le16(p + 18) / 100.0f;
   s.updated_ms = millis();
   portENTER_CRITICAL(&s_mux);
   s_state = s;

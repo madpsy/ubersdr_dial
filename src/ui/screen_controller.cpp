@@ -543,6 +543,7 @@ static void scale_text(int x, const char *t, uint16_t col) {
   }
 }
 
+static int meter_gap_half();
 static void wf_scale_update() {
   if (!s_wf_on || !s_scale_px) return;
   if (s_wf_center == s_scale_center && s_wf_span == s_scale_span) return;
@@ -572,7 +573,7 @@ static void wf_scale_update() {
     // Inside the rim on these rows, and clear of the SNR figure in the middle.
     const float dy = SCALE_Y0 + SCALE_H - 179.5f, half = sqrtf(160.0f * 160.0f - dy * dy);
     const int xmin = (int)(179.5f - half), xmax = (int)(179.5f + half);
-    const int snr0 = 180 - 34, snr1 = 180 + 34;
+    const int gap = meter_gap_half(), snr0 = 180 - gap, snr1 = 180 + gap;
     for (int64_t f = (lo / sub) * sub; f <= hi; f += sub) {
       if (f < 0) continue;
       int x = (int)((f - lo) * WF / (int64_t)s_wf_span);
@@ -584,7 +585,7 @@ static void wf_scale_update() {
       int w = scale_text_w(t), x0 = x - w / 2;
       // Just clipping the SNR gap: slide the label off it, away from the
       // centre, by up to 10 px (less than the gap between labels).
-      if (x0 + w > snr0 && x0 < snr1) {
+      if (gap && x0 + w > snr0 && x0 < snr1) {
         int nx = x < 180 ? snr0 - w : snr1;
         if (abs(nx - x0) > 10) continue;
         x0 = nx;
@@ -773,6 +774,114 @@ static const MenuChoice kStepChoices[] = {{"Auto", 0},      {"10 Hz", 10},   {"1
                                           {"100 kHz", 100000}};
 static bool is_local() { return s_link->local; }
 
+// ---------------------------------------------------------------- big readout
+// The figure in the middle (a setting): off, SNR, dBFS or the S-meter, with a
+// caption under it and the SQL line under that. Shown exactly as v2 shows
+// them (lib/format.js, TopBar's meter): SNR and dBFS rounded to whole dB, the
+// S-meter as sUnitLabel (S9 = -73 dBFS, 6 dB per S-unit below it; S0..S9,
+// then S9+n), coloured like v2's ramps.
+enum MeterMode : uint8_t { METER_OFF, METER_SNR, METER_DBFS, METER_S };
+static const MenuChoice kMeterChoices[] = {{"Off", METER_OFF}, {"SNR", METER_SNR}, {"dBFS", METER_DBFS},
+                                           {"S-meter", METER_S}};
+
+static float dbfs_to_s(float d) {
+  if (d < -121) return 0;
+  if (d < -73) return 1 + (d + 121) / 6;
+  return 9 + (d + 73) / 10;
+}
+static inline long js_round(float x) { return (long)floorf(x + 0.5f); }  // Math.round
+// Number.toFixed(0): halves away from zero, and keeps the sign of "-0".
+static void js_fixed0(char *o, size_t n, float x) {
+  long r = lroundf(x);
+  if (r == 0 && x < 0) snprintf(o, n, "-0");
+  else snprintf(o, n, "%ld", r);
+}
+static void s_unit_label(char *o, size_t n, float dbfs) {
+  float su = dbfs_to_s(dbfs);
+  if (su < 1) snprintf(o, n, "S0");
+  else if (su <= 9) snprintf(o, n, "S%ld", js_round(su));
+  else snprintf(o, n, "S9+%ld", js_round(dbfs + 73));
+}
+// v2's sUnitColour: hsl(hue, 90%, 55%), hue 0 (S1) .. 120 (S9 and up).
+static uint32_t s_unit_colour(float su) {
+  float c = fminf(9, fmaxf(1, su));
+  float h = (c - 1) / 8 * 120, sat = 0.9f, l = 0.55f;
+  float ch = (1 - fabsf(2 * l - 1)) * sat, hp = h / 60, x = ch * (1 - fabsf(fmodf(hp, 2) - 1));
+  float r = 0, g = 0, b = 0;
+  if (hp < 1) r = ch, g = x;
+  else r = x, g = ch;  // hue stays within 0..120
+  float m = l - ch / 2;
+  auto u8 = [](float v) { return (uint32_t)lroundf(fminf(1, fmaxf(0, v)) * 255); };
+  return (u8(r + m) << 16) | (u8(g + m) << 8) | u8(b + m);
+}
+
+// Half the widest figure the mode can show, plus a margin: the gap the scale
+// leaves under it (0 = no figure).
+static int meter_gap_half() {
+  const char *widest = g_settings.ctrl_meter == METER_SNR    ? "-88"
+                       : g_settings.ctrl_meter == METER_DBFS ? "-188"
+                       : g_settings.ctrl_meter == METER_S    ? "S9+88"
+                                                             : nullptr;
+  if (!widest) return 0;
+  return lv_text_get_width(widest, strlen(widest), &lv_font_montserrat_40, 0) / 2 + 4;
+}
+
+static void meter_apply() {
+  bool on = g_settings.ctrl_meter != METER_OFF;
+  for (lv_obj_t *o : {s_snr, s_snr_cap, s_sql}) {
+    if (!o) continue;
+    if (on) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+  s_scale_span = s_wf_span + 1;  // repaint the scale (its gap follows the mode)
+}
+
+static void meter_render() {
+  static char last[32] = "";
+  static uint32_t last_col = 0;
+  static uint8_t last_mode = 255;
+  uint8_t mode = g_settings.ctrl_meter;
+  if (mode == METER_OFF) {
+    last_mode = mode;
+    return;
+  }
+  char val[16], cap[24];
+  uint32_t col = COL_DIM;
+  float snr = s_st.snr, dbfs = s_st.dbfs;
+  if (mode == METER_SNR) {
+    snprintf(cap, sizeof cap, "SNR dB");
+    if (isnan(snr)) {
+      snprintf(val, sizeof val, "--");
+    } else {
+      js_fixed0(val, sizeof val, snr);
+      int si = (int)lroundf(snr);
+      col = si >= 15 ? COL_OK : (si >= 6 ? COL_WARN : COL_BAD);
+    }
+  } else if (isnan(dbfs) || dbfs <= -998) {
+    snprintf(val, sizeof val, "--");
+    snprintf(cap, sizeof cap, mode == METER_S ? "S-meter" : "dBFS");
+  } else if (mode == METER_DBFS) {
+    js_fixed0(val, sizeof val, dbfs);
+    snprintf(cap, sizeof cap, "dBFS");
+    col = s_unit_colour(dbfs_to_s(dbfs));
+  } else {
+    s_unit_label(val, sizeof val, dbfs);
+    char d[12];
+    js_fixed0(d, sizeof d, dbfs);
+    snprintf(cap, sizeof cap, "%s dBFS", d);
+    col = s_unit_colour(dbfs_to_s(dbfs));
+  }
+  char key[32];
+  snprintf(key, sizeof key, "%s|%s", val, cap);
+  if (mode == last_mode && col == last_col && !strcmp(key, last)) return;
+  last_mode = mode;
+  last_col = col;
+  strcpy(last, key);
+  lv_label_set_text(s_snr, val);
+  lv_obj_set_style_text_color(s_snr, C(col), 0);
+  lv_label_set_text(s_snr_cap, cap);
+}
+
 static const MenuItem kCtrlMenu[] = {
     // Receiver mode: the dial is the radio, so its own step (with Auto, which
     // follows the zoom) and where to listen live here.
@@ -811,6 +920,13 @@ static const MenuItem kCtrlMenu[] = {
        send_wf_rate();
      },
      kWfRate, 2, [] { return g_settings.ctrl_waterfall; }},
+    {LV_SYMBOL_EYE_OPEN, "Centre readout", [] { return (int)g_settings.ctrl_meter; },
+     [](int v) {
+       g_settings.ctrl_meter = v;
+       settings_save();
+       meter_apply();
+     },
+     kMeterChoices, 4},
     {LV_SYMBOL_REFRESH, "Restart (choose mode)", nullptr, [](int) { confirm_restart(); }, nullptr, 0},
 };
 
@@ -1183,6 +1299,7 @@ void controller_create(const DialLink *link) {
   lv_obj_align(s_snr_cap, LV_ALIGN_CENTER, 0, -4);
   s_sql = theme_label(s_live, &lv_font_montserrat_12, COL_DIM, "");
   lv_obj_align(s_sql, LV_ALIGN_CENTER, 0, 14);
+  meter_apply();
 
   // Drag strip: swipe across the middle to pan the waterfall (and the page's).
   if (s_wf_on) {
@@ -1491,20 +1608,9 @@ void controller_tick(int knob) {
   // pixels that changed (nothing at all when the values didn't).
   if (s_wf_on && millis() - s_last_compose >= 33 && !saver_spectrum_paused()) wf_rim_update();
 
-  // SNR readout, rim and LEDs
+  // Big readout, rim and LEDs
   float snr = s_st.snr;
-  static int last_snr = INT32_MIN;
-  int si = isnan(snr) ? INT32_MIN + 1 : (int)lroundf(snr);
-  if (si != last_snr) {
-    last_snr = si;
-    if (isnan(snr)) {
-      lv_label_set_text(s_snr, "--");
-      lv_obj_set_style_text_color(s_snr, C(COL_DIM), 0);
-    } else {
-      lv_label_set_text_fmt(s_snr, "%d", si);
-      lv_obj_set_style_text_color(s_snr, C(si >= 15 ? COL_OK : (si >= 6 ? COL_WARN : COL_BAD)), 0);
-    }
-  }
+  meter_render();
   led_ring_snr(snr);
   float tgt = isnan(snr) ? RIM_SNR_MIN : snr;
   s_meter = tgt > s_meter ? tgt : s_meter + (tgt - s_meter) * 0.12f;

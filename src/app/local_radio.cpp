@@ -47,7 +47,7 @@ static float s_snr_hist[5];  // for auto squelch, as v2's snrHistory
 static int s_snr_n = 0;
 static uint32_t s_snr_at = 0;
 static DialState s_state;
-static float s_snr_pub = NAN;
+static float s_snr_pub = NAN, s_dbfs_pub = NAN;
 static uint32_t s_snr_pub_at = 0;
 
 static bool locked() { return g_settings.tune_locked; }
@@ -191,6 +191,7 @@ static void build_state() {
   s.freq_hz = s_tune;
   s.mode = cur_mode().v2;
   s.snr = s_snr_pub;
+  s.dbfs = s_dbfs_pub;
   s.audio_up = audio_live();
   s.sql_on = sql_on();
   s.sql_db = sql_on() ? (float)g_settings.squelch_db : NAN;
@@ -205,7 +206,8 @@ static void build_state() {
   s.step_hz = tune_step();
   s.updated_ms = s_state.updated_ms;
   bool same = s.valid == s_state.valid && s.freq_hz == s_state.freq_hz && s.mode == s_state.mode &&
-              (s.snr == s_state.snr || (isnan(s.snr) && isnan(s_state.snr))) && s.audio_up == s_state.audio_up &&
+              (s.snr == s_state.snr || (isnan(s.snr) && isnan(s_state.snr))) &&
+              (s.dbfs == s_state.dbfs || (isnan(s.dbfs) && isnan(s_state.dbfs))) && s.audio_up == s_state.audio_up &&
               s.sql_on == s_state.sql_on && s.sql_open == s_state.sql_open && s.muted == s_state.muted &&
               s.locked == s_state.locked && s.volume == s_state.volume && s.bw_lo == s_state.bw_lo &&
               s.bw_hi == s_state.bw_hi && s.step_hz == s_state.step_hz &&
@@ -368,6 +370,7 @@ static void lr_loop() {
   if (now - s_snr_pub_at >= 50) {
     s_snr_pub_at = now;
     s_snr_pub = audio_snr_db_playing();
+    s_dbfs_pub = audio_dbfs_playing();
   }
   if (now - s_snr_at >= 200 && !isnan(s_snr_pub)) {
     s_snr_at = now;
@@ -480,7 +483,7 @@ void local_radio_start() {
   s_last_max = sdr_max_hz();
   s_audio_gen = 0;
   s_snr_n = 0;
-  s_snr_pub = NAN;
+  s_snr_pub = s_dbfs_pub = NAN;
   s_state = DialState();
   s_running = true;
   apply_volume();

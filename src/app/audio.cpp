@@ -53,7 +53,7 @@ static volatile float s_snr = NAN;
 // SNR readings stamped with when their audio reaches the speaker, so meters
 // can show the reading for what you're hearing rather than what just arrived
 // (the jitter buffer holds 0.3-1.5 s). Written by the net task, read by the UI.
-struct SnrStamp { uint32_t play_at; float snr; };
+struct SnrStamp { uint32_t play_at; float snr, dbfs; };
 static constexpr int kSnrQ = 256;  // > 1.5 s of 20 ms frames + margin
 static SnrStamp s_snr_q[kSnrQ];
 static volatile uint32_t s_snr_head = 0;  // total pushed
@@ -93,6 +93,7 @@ static void on_audio(const uint8_t *p, size_t len) {
     SnrStamp &st = s_snr_q[s_snr_head % kSnrQ];
     st.play_at = millis() + queued_ms + kDacLatencyMs;
     st.snr = s_snr;
+    st.dbfs = power > -900 ? power : NAN;
     s_snr_head = s_snr_head + 1;
   }
 
@@ -426,4 +427,14 @@ float audio_snr_db_playing() {
     if ((int32_t)(now - st.play_at) >= 0) return st.snr;
   }
   return NAN;  // nothing audible yet (still prebuffering)
+}
+
+float audio_dbfs_playing() {
+  if (!audio_live()) return NAN;
+  uint32_t now = millis(), head = s_snr_head;
+  for (uint32_t k = 0; k < kSnrQ && k < head; k++) {
+    const SnrStamp &st = s_snr_q[(head - 1 - k) % kSnrQ];
+    if ((int32_t)(now - st.play_at) >= 0) return st.dbfs;
+  }
+  return NAN;
 }
