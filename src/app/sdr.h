@@ -36,7 +36,9 @@ void sdr_set_spectrum(bool on);
 // The session looks dead (e.g. audio never comes): register a fresh one.
 void sdr_restart_session();
 
-// Receiver coverage, known after the first config message (0 until then).
+// Receiver coverage from /api/description's tuning_range, read on every new
+// connection (0 until the first session registers).
+uint32_t sdr_min_hz();
 uint32_t sdr_max_hz();
 
 // The registered session, for companion sockets (audio) that must share the

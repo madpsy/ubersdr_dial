@@ -1,5 +1,7 @@
 #include "sdr.h"
 
+#include "dial_link.h"  // DIAL_DEFAULT_MIN_HZ / MAX_HZ
+
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WebSocketsClient.h>
@@ -32,7 +34,9 @@ static uint32_t s_retry_at = 0;
 // Server-reported geometry
 static uint32_t s_bin_count = 0;
 static double s_bin_bw = 0;
-static uint32_t s_max_hz = 0;
+// Receiver coverage from /api/description (tuning_range), 0 until known.
+static uint32_t s_min_hz = 0, s_max_hz = 0;
+static bool s_range_known = false;  // false: not fetched yet, or fell back after a failed fetch
 
 // Spectrum state (v2)
 static constexpr int kMaxBins = 8192;
@@ -65,8 +69,7 @@ static uint32_t s_gen = 0;
 static uint32_t s_connect_started = 0;
 static bool s_registered = false;  // /connection accepted for s_session
 // The spectrum socket is only open while something shows the spectrum: the
-// session (and the audio on it) doesn't need it. Off: no socket, and the
-// receiver's coverage comes from /api/description instead of its config.
+// session (and the audio on it) doesn't need it.
 static bool s_want_spec = true;
 static bool s_closing = false;  // our own disconnect: not a drop
 
@@ -148,10 +151,11 @@ static bool post_connection(String *why) {
   return true;
 }
 
-// GET /api/description: the receiver's coverage (tuning_range.max_frequency),
-// for when there's no spectrum socket to send its config. A receiver that
-// doesn't publish it covers 10 kHz - 30 MHz (the server's own fallback).
-static uint32_t fetch_max_hz() {
+// GET /api/description: the receiver's coverage (tuning_range min/max_frequency),
+// which differs per instance. On failure (or a receiver that doesn't publish
+// it) 10 kHz - 30 MHz, the server's own fallback; false so the next session
+// tries again.
+static bool fetch_range(uint32_t *lo, uint32_t *hi) {
   String url = String(s_tls ? "https://" : "http://") + s_host + ":" + s_port + s_path_prefix + "api/description";
   WiFiClientSecure tls;
   WiFiClient plain;
@@ -159,20 +163,26 @@ static uint32_t fetch_max_hz() {
   HTTPClient http;
   http.setTimeout(10000);
   http.setUserAgent("UberSDR-Dial/0.1");
-  uint32_t hz = 0;
+  double mn = 0, mx = 0;
   if (s_tls ? http.begin(tls, url) : http.begin(plain, url)) {
     if (http.GET() == 200) {
       JsonDocument filter;
+      filter["tuning_range"]["min_frequency"] = true;
       filter["tuning_range"]["max_frequency"] = true;
       JsonDocument doc;
-      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter)))
-        hz = doc["tuning_range"]["max_frequency"] | 0.0;
+      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) {
+        mn = doc["tuning_range"]["min_frequency"] | 0.0;
+        mx = doc["tuning_range"]["max_frequency"] | 0.0;
+      }
     }
     http.end();
   }
-  if (!hz) hz = 30000000;
-  Serial.printf("[sdr] coverage from description: 0..%u Hz\n", (unsigned)hz);
-  return hz;
+  bool ok = mx > 0 && mn >= 0 && mn < mx;
+  *lo = ok ? (uint32_t)mn : DIAL_DEFAULT_MIN_HZ;
+  *hi = ok ? (uint32_t)mx : DIAL_DEFAULT_MAX_HZ;
+  Serial.printf("[sdr] coverage from description: %u..%u Hz%s\n", (unsigned)*lo, (unsigned)*hi,
+                ok ? "" : " (fallback)");
+  return ok;
 }
 
 // ---------------------------------------------------------------- decoding
@@ -184,12 +194,8 @@ static void handle_json(const char *txt, size_t len) {
   if (!strcmp(type, "config") || !strcmp(type, "status")) {
     if (doc["binCount"].is<int>()) s_bin_count = doc["binCount"];
     if (doc["binBandwidth"].is<double>()) s_bin_bw = doc["binBandwidth"];
-    if (!strcmp(type, "config") && s_max_hz == 0) {
-      double c = doc["centerFreq"] | 0.0, tot = doc["totalBandwidth"] | 0.0;
-      // First config is the receiver's default full-span view.
-      if (c > 0 && tot > 0) s_max_hz = (uint32_t)(c + tot / 2);
-      Serial.printf("[sdr] config bins=%u binbw=%.2f coverage=0..%u Hz\n", (unsigned)s_bin_count, s_bin_bw,
-                    (unsigned)s_max_hz);
+    if (!strcmp(type, "config")) {
+      Serial.printf("[sdr] config bins=%u binbw=%.2f\n", (unsigned)s_bin_count, s_bin_bw);
       s_view_dirty = true;  // apply our saved view now that binCount is known
     }
   } else if (!strcmp(type, "error")) {
@@ -347,12 +353,17 @@ static void start_session() {
     return;
   }
   LOCK();
-  bool need_max = !s_want_spec && !s_max_hz;
+  bool need_range = !s_range_known;
   bool want_spec = s_want_spec;
   UNLOCK();
-  uint32_t max_hz = need_max ? fetch_max_hz() : 0;
+  uint32_t lo = 0, hi = 0;
+  bool ok = need_range && fetch_range(&lo, &hi);
   LOCK();
-  if (max_hz) s_max_hz = max_hz;
+  if (need_range) {
+    s_min_hz = lo;
+    s_max_hz = hi;
+    s_range_known = ok;
+  }
   s_gen++;
   s_registered = true;  // audio may start now, in parallel with the spectrum handshake
   if (!want_spec) {     // the session is all there is: it's up
@@ -389,7 +400,8 @@ static void apply_request(const String &url) {
   if (s_ws_started) s_ws.disconnect();
   s_ws_started = false;
   LOCK();
-  s_max_hz = 0;
+  s_min_hz = s_max_hz = 0;
+  s_range_known = false;
   s_bin_count = 0;
   s_have_scale = false;
   s_new_frame = false;
@@ -605,6 +617,7 @@ String sdr_status_text() {
   UNLOCK();
   return s;
 }
+uint32_t sdr_min_hz() { return s_min_hz; }
 uint32_t sdr_max_hz() { return s_max_hz; }
 
 void sdr_set_view(uint32_t center_hz, uint32_t span_hz) {

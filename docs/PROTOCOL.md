@@ -32,7 +32,7 @@ travel together.
 | 97 | Waterfall drag. Value = pixels moved out of 360, + for right. |
 | 98 | Tap on the waterfall. Value = −127…127 across the view; tune there. |
 
-### State (page → dial), 20 bytes
+### State (page → dial), 28 bytes
 
 | Byte | Field |
 | --- | --- |
@@ -47,6 +47,13 @@ travel together.
 | 12–13 | Passband high edge in Hz, i16 |
 | 14–17 | Tuning step in Hz, u32 |
 | 18–19 | Signal level (baseband power) in dBFS × 100, i16, valid when flag b5 is set. The dial's S-meter and dBFS readouts use it. Older pages leave these zero and b5 clear. |
+| 20–23 | Lowest frequency the receiver tunes, Hz, u32 (`tuning_range.min_frequency`) |
+| 24–27 | Highest frequency the receiver tunes, Hz, u32 (`tuning_range.max_frequency`) |
+
+Older pages send 20 bytes. The dial treats a short record, zeros, or a maximum
+not above the minimum as an unknown range and uses UberSDR's default, 10 kHz –
+30 MHz. The page sends that default when it has no valid range itself. Older
+dials ignore bytes past 19.
 
 ### Name (page → dial)
 

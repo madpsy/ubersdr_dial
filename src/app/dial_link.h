@@ -9,6 +9,9 @@
 //     answers the same codes the same way the page would.
 // Codes are the BLE protocol's (docs/PROTOCOL.md, controls/dial.js).
 
+// UberSDR's own fallback coverage, for a receiver whose range isn't known.
+static constexpr uint32_t DIAL_DEFAULT_MIN_HZ = 10000, DIAL_DEFAULT_MAX_HZ = 30000000;
+
 // Receiver state shown by the screen.
 struct DialState {
   bool valid = false;  // there is a receiver to show (else the waiting panel)
@@ -21,6 +24,9 @@ struct DialState {
   float sql_db = NAN;  // threshold; NAN = off
   int16_t bw_lo = 0, bw_hi = 0;
   uint32_t step_hz = 0;
+  // The receiver's tuning range (/api/description's tuning_range); UberSDR's
+  // default 10 kHz - 30 MHz when it isn't known (an older page, no description).
+  uint32_t min_hz = DIAL_DEFAULT_MIN_HZ, max_hz = DIAL_DEFAULT_MAX_HZ;
   uint32_t updated_ms = 0;  // changes whenever anything above does
 };
 

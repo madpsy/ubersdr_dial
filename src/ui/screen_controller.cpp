@@ -1178,12 +1178,14 @@ static void open_mode_picker() {
 
 static void open_band_picker() {
   open_sheet("BAND");
-  // Receiver mode knows its coverage: only bands it fully covers (as v2's
-  // bandsInRange). Over Bluetooth the page sorts that out itself.
-  uint32_t top = s_link->local && sdr_max_hz() ? sdr_max_hz() : UINT32_MAX;
+  // Only bands the receiver fully covers (as v2's bandsInRange); its range is
+  // 10 kHz - 30 MHz when unknown.
+  bool ranged = s_st.max_hz > s_st.min_hz;
+  uint32_t top = ranged ? s_st.max_hz : UINT32_MAX;
+  uint32_t bottom = ranged ? s_st.min_hz : 0;
   int idx[16], n = 0;
   for (int i = 0; i < kDialNumBands && n < 16; i++)
-    if (kDialBands[i].hi <= top) idx[n++] = i;
+    if (kDialBands[i].lo >= bottom && kDialBands[i].hi <= top) idx[n++] = i;
   for (int k = 0; k < n; k++) {
     const DialBand &b = kDialBands[idx[k]];
     bool here = s_st.freq_hz >= b.lo && s_st.freq_hz <= b.hi;

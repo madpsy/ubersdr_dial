@@ -37,7 +37,7 @@ static uint32_t s_tune, s_center, s_span;
 static int s_zoom_idx = 0;
 static bool s_follow = true;
 static uint32_t s_band_mem[16];
-static uint32_t s_audio_gen = 0, s_last_max = 0;
+static uint32_t s_audio_gen = 0, s_last_min = 0, s_last_max = 0;
 static bool s_saved = true;
 static uint32_t s_changed_at = 0;
 static int s_wf_rate = 5;  // lines a second the screen wants
@@ -52,10 +52,9 @@ static float s_snr_pub = NAN, s_dbfs_pub = NAN;
 static uint32_t s_snr_pub_at = 0;
 
 static bool locked() { return g_settings.tune_locked; }
-static uint32_t max_hz() {
-  uint32_t m = sdr_max_hz();
-  return m ? m : 30000000;
-}
+// The receiver's range, 10 kHz - 30 MHz until the session has fetched it.
+static uint32_t max_hz() { return sdr_max_hz() ? sdr_max_hz() : DIAL_DEFAULT_MAX_HZ; }
+static uint32_t min_hz() { return sdr_max_hz() ? sdr_min_hz() : DIAL_DEFAULT_MIN_HZ; }
 static uint32_t span_for(int idx) {
   uint32_t full = max_hz();
   uint32_t s = kSpans[idx] ? kSpans[idx] : full;
@@ -118,8 +117,9 @@ static int band_of(uint32_t hz) {
 
 // Tuning, filter or view changed: place the view, tell both sockets.
 static void view_changed() {
-  uint32_t mx = max_hz();
+  uint32_t mn = min_hz(), mx = max_hz();
   if (s_tune > mx) s_tune = mx;
+  if (s_tune < mn) s_tune = mn;
   if (!s_follow) {
     // Panned away: keep the view unless the tuned frequency has left it.
     int64_t lo = (int64_t)s_center - s_span / 2;
@@ -205,13 +205,16 @@ static void build_state() {
   s.bw_lo = lo;
   s.bw_hi = hi;
   s.step_hz = tune_step();
+  s.min_hz = min_hz();
+  s.max_hz = max_hz();
   s.updated_ms = s_state.updated_ms;
   bool same = s.valid == s_state.valid && s.freq_hz == s_state.freq_hz && s.mode == s_state.mode &&
               (s.snr == s_state.snr || (isnan(s.snr) && isnan(s_state.snr))) &&
               (s.dbfs == s_state.dbfs || (isnan(s.dbfs) && isnan(s_state.dbfs))) && s.audio_up == s_state.audio_up &&
               s.sql_on == s_state.sql_on && s.sql_open == s_state.sql_open && s.muted == s_state.muted &&
               s.locked == s_state.locked && s.volume == s_state.volume && s.bw_lo == s_state.bw_lo &&
-              s.bw_hi == s_state.bw_hi && s.step_hz == s_state.step_hz &&
+              s.bw_hi == s_state.bw_hi && s.step_hz == s_state.step_hz && s.min_hz == s_state.min_hz &&
+              s.max_hz == s_state.max_hz &&
               (s.sql_db == s_state.sql_db || (isnan(s.sql_db) && isnan(s_state.sql_db)));
   if (!same) {
     s.updated_ms = millis() | 1;  // never 0, which the screen starts from
@@ -359,8 +362,10 @@ static bool want_spectrum() { return g_settings.ctrl_bg != BG_OFF && !saver_spec
 static void lr_loop() {
   if (!s_running) return;
   uint32_t now = millis();
-  // Receiver coverage arrives with the first config: re-apply zoom limits.
-  if (sdr_max_hz() != s_last_max) {
+  // Receiver coverage arrives once the session registers: re-apply the
+  // tuning and zoom limits.
+  if (sdr_max_hz() != s_last_max || sdr_min_hz() != s_last_min) {
+    s_last_min = sdr_min_hz();
     s_last_max = sdr_max_hz();
     s_span = span_for(s_zoom_idx);
     view_changed();
@@ -506,6 +511,7 @@ void local_radio_start() {
     if (kSpans[i] && labs((long)kSpans[i] - (long)s_span) < labs((long)kSpans[best] - (long)s_span)) best = i;
   s_zoom_idx = best;
   s_span = span_for(best);
+  s_last_min = sdr_min_hz();
   s_last_max = sdr_max_hz();
   s_audio_gen = 0;
   s_snr_n = 0;

@@ -45,6 +45,15 @@ void ctrl_rx_state(const uint8_t *p, size_t n) {
   // Flag b5: bytes 18-19 hold the baseband power, dBFS x 100 (older pages
   // leave them zero and the flag clear).
   if (n >= 20 && (p[7] & 32)) s.dbfs = (int16_t)le16(p + 18) / 100.0f;
+  // Bytes 20-27: the receiver's tuning range (older pages send 20 bytes). Zero,
+  // or a max not above the min, is unknown: the 10 kHz - 30 MHz default stays.
+  if (n >= 28) {
+    uint32_t lo = le32(p + 20), hi = le32(p + 24);
+    if (hi > lo) {
+      s.min_hz = lo;
+      s.max_hz = hi;
+    }
+  }
   s.updated_ms = millis();
   portENTER_CRITICAL(&s_mux);
   s_state = s;
@@ -169,10 +178,11 @@ static void link_status(String *text, uint32_t *dot) {
 }
 
 // v2's zoom limits: MIN_ZOOM_SPAN_HZ (spectrum-connection.js) up to the whole
-// receiver, 0-30 MHz on UberSDR. The page doesn't send them.
+// receiver: its max frequency (30 MHz unless the page says otherwise).
 static void link_zoom_range(uint32_t *min_hz, uint32_t *max_hz) {
+  uint32_t top = link_state().max_hz;
   *min_hz = 2048;
-  *max_hz = 30000000;
+  *max_hz = top > *min_hz ? top : DIAL_DEFAULT_MAX_HZ;
 }
 
 const DialLink kCtrlLink = {
