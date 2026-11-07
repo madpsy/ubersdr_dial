@@ -170,7 +170,10 @@ static bool fetch_range(uint32_t *lo, uint32_t *hi) {
       filter["tuning_range"]["min_frequency"] = true;
       filter["tuning_range"]["max_frequency"] = true;
       JsonDocument doc;
-      if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) {
+      // getString(), not getStream(): receivers answer chunked (behind Caddy),
+      // and the raw stream carries the chunk sizes, so the parse would fail.
+      String body = http.getString();
+      if (!deserializeJson(doc, body, DeserializationOption::Filter(filter))) {
         mn = doc["tuning_range"]["min_frequency"] | 0.0;
         mx = doc["tuning_range"]["max_frequency"] | 0.0;
       }
