@@ -9,6 +9,7 @@
 
 #include <vector>
 
+#include "ota.h"
 #include "settings.h"
 
 static WebServer *s_web = nullptr;
@@ -218,7 +219,10 @@ void wifi_setup_loop() {
   s_dns->processNextRequest();
   s_web->handleClient();
   if (s_scanning) scan_collect();
-  if (s_reboot_at && millis() > s_reboot_at) ESP.restart();
+  if (s_reboot_at && millis() > s_reboot_at) {
+    ota_mark_good();  // a restart chosen from the UI isn't a failed update
+    ESP.restart();
+  }
 }
 
 bool wifi_setup_active() { return s_web != nullptr; }

@@ -41,6 +41,15 @@ done
 grep -aq "v$VER" docs/flash/firmware.bin || fail "firmware.bin doesn't contain v$VER"
 ok "Binaries are this build, and the firmware says v$VER"
 
+step "Writing ota.json (what dials update from)..."
+# The dial installs firmware.bin only if its size and SHA-256 match these.
+SIZE=$(stat -c %s docs/flash/firmware.bin)
+SHA=$(sha256sum docs/flash/firmware.bin | cut -d' ' -f1)
+printf '{\n  "version": "%s",\n  "size": %s,\n  "sha256": "%s"\n}\n' "$VER" "$SIZE" "$SHA" > docs/flash/ota.json
+python3 -c "import json,sys; d=json.load(open('docs/flash/ota.json')); sys.exit(d['version']!='$VER' or d['size']!=$SIZE)" \
+  || fail "ota.json doesn't check out"
+ok "ota.json: v$VER, $SIZE bytes, sha256 $SHA"
+
 step "Committing, tagging and pushing..."
 git add VERSION docs/flash
 git commit -q -m "Release v$VER"

@@ -82,6 +82,7 @@ void settings_load() {
   g_settings.saver_secs = s_prefs.getUShort("svs", 120);
   g_settings.saver_off_secs = s_prefs.getUShort("svo", 0);
   g_settings.sleep_mins = s_prefs.getUShort("slp", 30);
+  g_settings.ota_auto = s_prefs.getBool("otaa", true);
   s_prefs.end();
 }
 
@@ -106,6 +107,7 @@ void settings_save() {
   s_prefs.putUShort("svs", g_settings.saver_secs);
   s_prefs.putUShort("svo", g_settings.saver_off_secs);
   s_prefs.putUShort("slp", g_settings.sleep_mins);
+  s_prefs.putBool("otaa", g_settings.ota_auto);
   s_prefs.putString("mode", g_settings.mode);
   s_prefs.putUChar("vol", g_settings.volume);
   s_prefs.putBool("mute", g_settings.muted);

@@ -1,6 +1,7 @@
 // Startup chooser: Receiver (Wi-Fi, the dial is the radio) or Controller (the
 // dial drives the UberSDR web UI, over Bluetooth or a USB cable). Asked on
 // every boot; the last choice is pre-highlighted so a tap is all it takes.
+#include "../app/ota.h"
 #include "../app/settings.h"
 #include "../app/wifi_setup.h"
 
@@ -79,6 +80,25 @@ static void open_settings() {
                     ui_show_setup("");
                   },
                   nullptr, 0};
+    // Firmware update: joins the saved Wi-Fi, checks, offers what it finds.
+    // Back here afterwards is a restart (Wi-Fi off again, as at start-up).
+    items[n++] = {LV_SYMBOL_DOWNLOAD, "Firmware update", nullptr,
+                  [](int) {
+                    menu_close();
+                    ota_check_async(true);
+                    ui_show_update([] {
+                      ota_mark_good();
+                      ESP.restart();
+                    });
+                  },
+                  nullptr, 0};
+    static const MenuChoice kOnOff[] = {{"On", 1}, {"Off", 0}};
+    items[n++] = {LV_SYMBOL_REFRESH, "Update check", [] { return (int)g_settings.ota_auto; },
+                  [](int v) {
+                    g_settings.ota_auto = v;
+                    settings_save();
+                  },
+                  kOnOff, 2};
     for (int i = 0; i < kNumDeviceMenu && n < 16; i++) items[n++] = kDeviceMenu[i];
   }
   menu_open(s_scr, "S E T T I N G S", COL_TEXT, items, n, &s_overlay);

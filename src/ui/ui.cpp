@@ -59,6 +59,12 @@ void ui_show_controller() {
   controller_create(&kCtrlLink);
 }
 
+void ui_show_update(void (*done)()) {
+  leaving();
+  s_cur = Screen::Update;
+  update_create(done);
+}
+
 Screen ui_current() { return s_cur; }
 
 void ui_tick() {
@@ -67,6 +73,7 @@ void ui_tick() {
   switch (s_cur) {
     case Screen::Picker: picker_tick(k); break;
     case Screen::ModeSelect: modesel_tick(k); break;
+    case Screen::Update: update_tick(k); break;
     case Screen::Radio:  // same screen, local link
     case Screen::Controller: controller_tick(k); break;
     default: break;

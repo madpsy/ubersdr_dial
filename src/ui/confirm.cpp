@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "../app/ota.h"
 #include "theme.h"
 
 static lv_obj_t **s_slot;
@@ -40,5 +41,8 @@ void confirm_restart_open(lv_obj_t *screen, lv_obj_t **slot, const char *title, 
       LV_EVENT_CLICKED, nullptr);
   lv_obj_t *yes = theme_pill(o, yes_txt, COL_WARN, 110, 44);
   lv_obj_align(yes, LV_ALIGN_CENTER, 62, 44);
-  lv_obj_add_event_cb(yes, [](lv_event_t *) { ESP.restart(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(yes, [](lv_event_t *) {
+        ota_mark_good();  // a restart chosen from the UI isn't a failed update
+        ESP.restart();
+      }, LV_EVENT_CLICKED, nullptr);
 }

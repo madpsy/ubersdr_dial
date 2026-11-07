@@ -43,6 +43,36 @@ firmware imports them on first boot, then erases that partition.
 
 See [Building](#building).
 
+### Updating over Wi-Fi
+
+From v1.10.0 the dial can update itself from the releases published here, so
+you only need the web flasher once.
+
+- **Automatically:** in Receiver mode the dial checks for a new version just
+  after it joins Wi-Fi. If there is one, it asks first: tap **Install**, or
+  **Later** to go on to the radio. Waking from sleep skips the check. Turn it
+  off in Settings on the start screen (**Update check**).
+- **By hand:** on the start screen, open Settings and tap **Firmware
+  update**. The dial joins your saved Wi-Fi and checks, then restarts when
+  you're done.
+
+Updates keep your settings, and the dial only installs newer versions. It's
+safe to interrupt one:
+
+- The new firmware goes into the second app slot, and the running one isn't
+  touched until the new one has been checked. If the power goes or the
+  download fails, the dial stays as it was.
+- Downloads are over HTTPS with the certificate verified. The file has to
+  match the size and SHA-256 published in `ota.json` before the dial will
+  boot it.
+- The new version starts on trial. If it crashes or resets before it has
+  shown it works (a mode picked, or 20 seconds running), the bootloader goes
+  back to the previous version. That version then isn't offered
+  automatically again (**Firmware update** still lets you retry).
+
+If an update does leave the dial unable to update itself, the web flasher
+still works.
+
 ## Features
 
 Each time it starts, the dial asks which mode to use. Your last choice is
@@ -118,6 +148,12 @@ download mode by itself. If it can't, use the manual BOOT-button method in
 [Install](#from-your-browser-easiest). On Linux it appears as
 `/dev/ttyACM0`.
 
+To test updates over Wi-Fi without releasing, build with
+`PLATFORMIO_BUILD_FLAGS='-DOTA_TEST_BASE=\"http://<your-pc>:8000/\"'` and
+serve a folder holding `firmware.bin` and an `ota.json` like the one
+`release.sh` writes. Serial `!o` on the start screen runs **Firmware update**,
+`!y` taps **Install** and `!m` taps **Receiver**.
+
 To read the serial log, use `pio device monitor`. You can also open the port
 yourself, but keep echo off. On Linux:
 
@@ -141,7 +177,9 @@ This does the whole release:
 3. Builds the firmware and copies `bootloader.bin`, `partitions.bin`,
    `boot_app0.bin` and `firmware.bin` into `docs/flash/`.
 4. Checks that those binaries are this build.
-5. Commits, tags `v1.2.0` and pushes.
+5. Writes `docs/flash/ota.json` (version, size and SHA-256 of `firmware.bin`),
+   which dials check for [updates over Wi-Fi](#updating-over-wi-fi).
+6. Commits, tags `v1.2.0` and pushes.
 
 GitHub Pages then publishes the new flasher from the `docs/` folder. The
 firmware gets its version from `VERSION` at build time and shows it on the

@@ -30,6 +30,7 @@ struct Settings {
   bool tune_locked = false;   // receiver mode: tuning lock (as v2's padlock)
   uint8_t saver_mode = 0;     // SaverMode: dim (default) / off / spectrum off / never / dim then off
   uint16_t saver_off_secs = 0;  // "dim, then off": idle time before the screen goes off; 0 = 3x saver_secs
+  bool ota_auto = true;      // receiver mode: check for a firmware update after joining Wi-Fi
   uint16_t sleep_mins = 30;  // deep sleep after this long idle (when nothing would be cut off); 0 = never
   uint16_t saver_secs = 120;  // idle time before the saver starts     // last startup choice: 0 receiver, 1 controller    // filter width per mode (index into the mode table); 0 = default
 };

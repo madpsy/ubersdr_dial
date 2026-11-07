@@ -10,6 +10,7 @@
 #include "app/ctrl_link.h"
 #include "app/dial_link.h"
 #include "app/instances.h"
+#include "app/ota.h"
 #include "app/saver.h"
 #include "app/sdr.h"
 #include "app/settings.h"
@@ -70,6 +71,7 @@ void setup() {
   mbedtls_platform_set_calloc_free(tls_calloc, heap_caps_free);
   Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
   sleep_boot();  // release pins held through deep sleep; note what woke us
+  ota_boot();    // fresh update on trial? rolled back?
   settings_load();
 
   lv_init();
@@ -95,6 +97,7 @@ void setup() {
     switch (ui_current()) {
       case Screen::Controller: return !kCtrlLink.connected();  // no page using it
       case Screen::Radio: return g_settings.muted;             // not playing
+      case Screen::Update: return false;                       // may be installing
       default: return true;                                    // start-up choice, setup, picker
     }
   });
@@ -110,6 +113,13 @@ void setup() {
   }
   // Asked every boot: be the radio (Wi-Fi) or drive the web UI (Bluetooth).
   ui_show_mode_select([](int mode) { s_start_mode = mode; });
+}
+
+// The picker fetches the receiver list itself when shown; don't run a
+// second TLS session alongside the spectrum socket (internal RAM is tight).
+static void finish_receiver() {
+  if (!g_settings.inst_url.isEmpty()) ui_show_radio();  // resume the last receiver
+  else ui_show_picker();
 }
 
 // Receiver mode: join Wi-Fi, then resume the last receiver or pick one.
@@ -132,10 +142,23 @@ static void start_receiver() {
     return;
   }
   Serial.printf("[wifi] connected, IP %s\n", WiFi.localIP().toString().c_str());
-  // The picker fetches the receiver list itself when shown; don't run a
-  // second TLS session alongside the spectrum socket (internal RAM is tight).
-  if (!g_settings.inst_url.isEmpty()) ui_show_radio();  // resume the last receiver
-  else ui_show_picker();
+  // Firmware update check, before any receiver session (internal RAM is
+  // tight with both). Not on waking from sleep, which should be quick; not
+  // for a version it already rolled back from; never longer than 12 s.
+  if (g_settings.ota_auto && sleep_woke_mode() < 0 && ota_version_known()) {
+    ui_boot_status("Checking for updates...");
+    ota_check_async(false);
+    uint32_t t0 = millis();
+    while (ota_state() == OtaState::Checking && millis() - t0 < 12000) {
+      pump_ui();
+      delay(20);
+    }
+    if (ota_state() == OtaState::Available && !ota_latest_failed()) {
+      ui_show_update(finish_receiver);  // Later carries on into the radio
+      return;
+    }
+  }
+  finish_receiver();
 }
 
 // Controller mode, over Bluetooth or USB serial. Wi-Fi stays off, so it never
@@ -232,6 +255,19 @@ static void serial_commands() {
       sleep_start();
     } else if (c == 'w') {
       Serial.printf("[dbg] %s\n", sleep_wake_note());
+    } else if (c == 'o') {  // as Settings > Firmware update (start-up screen only)
+      if (ui_current() == Screen::ModeSelect) {
+        Serial.println("[dbg] firmware update");
+        ota_check_async(true);
+        ui_show_update([] {
+          ota_mark_good();
+          ESP.restart();
+        });
+      }
+    } else if (c == 'm') {  // as tapping Receiver on the start-up screen
+      if (ui_current() == Screen::ModeSelect) s_start_mode = 0;
+    } else if (c == 'y') {  // press Install on the update screen
+      if (ui_current() == Screen::Update) update_debug_install();
     } else if (c == 'i') {
       Serial.printf("[dbg] rssi %d dBm, ch %d, internal heap %u, psram %u\n", (int)WiFi.RSSI(), WiFi.channel(),
                     (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
@@ -244,6 +280,7 @@ void loop() {
   if (s_start_mode >= 0) {
     int m = s_start_mode;
     s_start_mode = -1;
+    ota_mark_good();  // the UI works: a mode was picked (or we woke into one)
     if (m == 1 || m == 2) start_controller(m == 2);
     else start_receiver();
   }
@@ -257,6 +294,7 @@ void loop() {
   uint32_t m2 = micros();
   saver_tick();
   sleep_tick();
+  ota_tick();
   m_other += (micros() - m2) + (m1 - m0);
   m_ui += m2 - m1;
   if (++m_n && millis() - m_at > 5000) {

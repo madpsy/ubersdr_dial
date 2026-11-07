@@ -6,6 +6,7 @@
 #include <esp_sleep.h>
 
 #include "../hw/board.h"
+#include "ota.h"
 #include "../hw/display.h"
 #include "../hw/input.h"
 #include "../hw/led_ring.h"
@@ -76,6 +77,7 @@ static void sleep_now() {
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keeps those pull-ups on
   esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
   Serial.flush();
+  ota_mark_good();  // waking is a reset: don't let it count as a failed update
   esp_deep_sleep_start();
 }
 
