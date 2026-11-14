@@ -51,6 +51,7 @@ static bool s_new_frame = false;
 // Requested view
 static uint32_t s_want_center = 0, s_want_span = 0;
 static bool s_view_dirty = false;
+static bool s_config_seen = false;  // first "config" of this socket session arrived
 // Server poll divisor (v2's set_rate): 1 = full rate .. 8. Fewer frames when
 // the dial doesn't need them is less Wi-Fi, inflate and decode work.
 static uint8_t s_want_div = 1;
@@ -198,8 +199,14 @@ static void handle_json(const char *txt, size_t len) {
     if (doc["binCount"].is<int>()) s_bin_count = doc["binCount"];
     if (doc["binBandwidth"].is<double>()) s_bin_bw = doc["binBandwidth"];
     if (!strcmp(type, "config")) {
-      Serial.printf("[sdr] config bins=%u binbw=%.2f\n", (unsigned)s_bin_count, s_bin_bw);
-      s_view_dirty = true;  // apply our saved view now that binCount is known
+      // Only the session's first config: the server answers every zoom with
+      // a config, so re-applying the view on each one looped zoom/config
+      // several times a second for as long as the socket was open.
+      if (!s_config_seen) {
+        s_config_seen = true;
+        Serial.printf("[sdr] config bins=%u binbw=%.2f\n", (unsigned)s_bin_count, s_bin_bw);
+        s_view_dirty = true;  // apply our saved view now that binCount is known
+      }
     }
   } else if (!strcmp(type, "error")) {
     String err = doc["error"] | "error";
@@ -311,6 +318,7 @@ static void ws_event(WStype_t type, uint8_t *payload, size_t length) {
       s_status = "live";
       s_last_ping = s_last_frame = millis();
       s_view_dirty = true;  // a new session starts at the server default view
+      s_config_seen = false;
       s_div_dirty = s_want_div > 1;  // and at full rate
       UNLOCK();
       break;
