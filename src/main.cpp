@@ -69,6 +69,12 @@ void setup() {
   // host drained it. 1 ms gives up after one stalled millisecond.
   Serial.setTxTimeoutMs(1);
   mbedtls_platform_set_calloc_free(tls_calloc, heap_caps_free);
+  // Core 0 runs all the networking. A TLS handshake with a P-384 (ECDSA)
+  // receiver - its key exchange is P-384 too - is seconds of bignum maths,
+  // and the audio and spectrum sockets open back to back, so core 0's idle
+  // task could go 5 s without running and the task watchdog reset the dial
+  // mid-connect (seen on HB9RYZ-1). Core 1 (UI) stays watched.
+  disableCore0WDT();
   Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
   sleep_boot();  // release pins held through deep sleep; note what woke us
   ota_boot();    // fresh update on trial? rolled back?
