@@ -1,5 +1,6 @@
 {
   "version": "1.10.2",
-  "size": 2011488,
-  "sha256": "4189dc02979022b43789bcc0e6ef3d658420862c015106c3d9876bc337b321f9"
+  "size": 2013232,
+  "sha256": "4d050874bfee0b674a8e5379d6bfd735868c6ec58088f77b9fc4bca0aebebea8",
+  "boards": ["JC3636K718", "JC3636K518"]
 }
