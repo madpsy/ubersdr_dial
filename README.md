@@ -1,11 +1,19 @@
 # UberSDR Dial
 
-ESP32 firmware that turns the **Guition JC3636K518C** (also sold as
-JC3636K718) into a hand-held front end for [UberSDR](https://ubersdr.org).
-The board is ESP32-S3 based: a 1.8" round touch display on a rotary knob.
+ESP32 firmware that turns a Guition 1.8" round knob display into a hand-held
+front end for [UberSDR](https://ubersdr.org). The boards are ESP32-S3 based:
+a round touch display on a rotary knob.
 
-Tested with the **JC3636K718C-I-Y1(RD)**
-([AliExpress](https://www.aliexpress.com/item/1005011771382178.html)).
+Two boards are supported. They look alike but are wired differently, so
+build for the one you have (see [Hardware](#hardware)):
+
+| Board | Build environment | Tested with |
+| --- | --- | --- |
+| Guition **JC3636K718** | `jc3636k718` | JC3636K718C-I-Y1(RD) ([AliExpress](https://www.aliexpress.com/item/1005011771382178.html)) |
+| Guition **JC3636K518C**, V2 board (Waveshare ESP32-S3-Knob-Touch-LCD-1.8 layout) | `jc3636k518` | JC3636K518C_I_YR1 |
+
+The web flasher and over-the-air updates publish the **JC3636K718** build
+only. Flash a JC3636K518C from source.
 
 <p align="center">
   <img src="docs/dial-1.png" alt="UberSDR Dial" width="45%">
@@ -121,15 +129,37 @@ To change networks later, use **Wi-Fi setup** in the menu.
 
 ## Hardware
 
-Guition JC3636K518C (also sold as JC3636K718):
+Both boards share:
 
 - ESP32-S3R8, with 16 MB flash and 8 MB octal PSRAM
 - 360×360 ST77916 display over QSPI, with CST816 touch
-- Rotary encoder
+- A knob that pulses one of two pins per detent (not quadrature)
 - PCM5100A DAC and speaker
-- WS2812 LED ring
-- Haptic motor
+- DRV2605 haptic driver
 - Battery
+
+Where they differ (pin maps in `src/hw/board.h`):
+
+| | JC3636K718 | JC3636K518C |
+| --- | --- | --- |
+| LCD SCK / CS / D0–D3 / RST / backlight | 11 / 12 / 13–16 / 17 / 21 | 13 / 14 / 15–18 / 21 / 47 |
+| Touch SDA / SCL / INT / RST | 9 / 10 / 7 / 8 | 11 / 12 / 9 / 10 |
+| Knob clockwise / anticlockwise | 1 / 2 | 8 / 7 |
+| I2S BCK / WS / DOUT | 3 / 45 / 42 | 39 / 40 / 41 |
+| DAC mute | GPIO46 | the board's second chip (ESP32-U4WDH) |
+| DAC source switch | none | CH445P on GPIO0; its pull-up selects the S3 |
+| WS2812 LED ring | 13 LEDs on GPIO0 | none |
+| Haptic motor | ERM | LRA |
+| Battery ADC | GPIO6 | GPIO1 |
+
+On the JC3636K518C, the display is the right way up with the USB-C socket at
+the bottom.
+
+The `jc3636k518` build is for the **V2** JC3636K518C. On a V1 board the DAC is
+wired only to the second chip, and GPIO39/40 are a serial link to it, so
+there's no audio from the S3. The haptic driver's enable pin is also on GPIO38
+there. Display, touch, knob and battery use the same pins on both. If audio
+plays and the haptic buzzes, it's a V2.
 
 ## Building
 
@@ -139,9 +169,18 @@ LVGL 9.2, NimBLE, WebSockets, ArduinoJson, ESP8266Audio (Opus) and
 Adafruit NeoPixel.
 
 ```sh
-pio run -e jc3636k718                 # build
+pio run -e jc3636k718                 # build (JC3636K718)
 pio run -e jc3636k718 -t upload       # build and flash over USB-C
+pio run -e jc3636k518 -t upload       # the same for a JC3636K518C
 ```
+
+On Windows, keep the project in a short path (for example `C:\dev\ubersdr_dial`).
+LVGL's deep file names can exceed the Windows path limit and the library
+install then fails. Setting `PLATFORMIO_WORKSPACE_DIR` to a short folder also
+works.
+
+If esptool reports *Wrong boot mode detected*, the firmware on the board isn't
+answering the reset. Hold BOOT while powering on, then flash.
 
 The board uses the ESP32-S3's native USB, so esptool normally resets it into
 download mode by itself. If it can't, use the manual BOOT-button method in
@@ -161,8 +200,13 @@ yourself, but keep echo off. On Linux:
 stty -F /dev/ttyACM0 -hupcl raw -echo 115200 && cat /dev/ttyACM0
 ```
 
-`jc3636k718` is the environment to use. `jc3636k718-idf`, which builds Arduino
-as an ESP-IDF component, is an experiment and isn't recommended.
+Use `jc3636k718` or `jc3636k518` to match your board. `jc3636k718-idf`, which
+builds Arduino as an ESP-IDF component, is an experiment and isn't
+recommended.
+
+If you set up Wi-Fi from an iPhone and `http://192.168.4.1/` won't load, try
+turning off mobile data first, or use another device. An iPad worked where an
+iPhone didn't.
 
 ### Releasing
 

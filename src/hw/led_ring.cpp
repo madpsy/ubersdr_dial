@@ -5,6 +5,17 @@
 
 #include "board.h"
 
+bool g_led_disabled = false;  // debug: keep the ring dark
+bool g_led_saver_off = false;
+
+#if LED_RING_COUNT == 0
+// Board has no ring: every call is a no-op.
+void led_ring_init() {}
+void led_ring_calibrate() {}
+void led_ring_test_one(int) {}
+void led_ring_off() {}
+void led_ring_snr(float) {}
+#else
 static Adafruit_NeoPixel s_ring(LED_RING_COUNT, PIN_LED_RING, NEO_GRB + NEO_KHZ800);
 static float s_level = -99;  // smoothed SNR shown
 static uint32_t s_last = 0;
@@ -59,9 +70,6 @@ void led_ring_off() {
   s_ring.show();
 }
 
-bool g_led_disabled = false;  // debug: keep the ring dark
-bool g_led_saver_off = false;
-
 void led_ring_snr(float snr) {
   if (g_led_disabled || g_led_saver_off) return;
   if ((int32_t)(s_calib_until - millis()) > 0) return;
@@ -102,3 +110,4 @@ void led_ring_snr(float snr) {
   }
   s_ring.show();
 }
+#endif  // LED_RING_COUNT

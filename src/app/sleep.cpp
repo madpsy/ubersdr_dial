@@ -25,7 +25,11 @@ static uint32_t s_anim_at = 0;  // 0 = not animating
 static constexpr uint32_t kAnimMs = 3400;
 
 // Pins held at a level through sleep: backlight off, DAC muted, touch out of reset.
-static const gpio_num_t kHeld[] = {(gpio_num_t)PIN_LCD_BL, (gpio_num_t)PIN_DAC_MUTE, (gpio_num_t)PIN_TP_RST};
+static const gpio_num_t kHeld[] = {(gpio_num_t)PIN_LCD_BL,
+#if PIN_DAC_MUTE >= 0
+                                   (gpio_num_t)PIN_DAC_MUTE,
+#endif
+                                   (gpio_num_t)PIN_TP_RST};
 // Wake: either knob pin (each detent pulses one LOW) or the touch interrupt.
 static const gpio_num_t kWake[] = {(gpio_num_t)PIN_KNOB_CW, (gpio_num_t)PIN_KNOB_CCW, (gpio_num_t)PIN_TP_INT};
 
@@ -57,7 +61,9 @@ static void sleep_now() {
   s_resume = s_mode ? s_mode() : -1;
   Serial.printf("[sleep] going to sleep (resume mode %d)\n", s_resume);
   led_ring_off();
+#if PIN_DAC_MUTE >= 0
   digitalWrite(PIN_DAC_MUTE, LOW);
+#endif
   display_sleep();  // panel off, backlight pin LOW
   touch_sleep();    // touch chip to its low-power scan
   delay(20);        // let the LED ring's last frame and the panel commands land

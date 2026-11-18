@@ -335,8 +335,10 @@ void audio_init() {
   s_dec = (OpusDecoder *)ps_malloc(dsz);
   opus_decoder_init(s_dec, kRate, 1);
 
+#if PIN_DAC_MUTE >= 0
   pinMode(PIN_DAC_MUTE, OUTPUT);
   digitalWrite(PIN_DAC_MUTE, HIGH);  // LOW mutes the PCM5100A
+#endif
 
   i2s_config_t cfg = {};
   cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);

@@ -3,8 +3,9 @@
 #include <Arduino.h>
 #include <math.h>
 
-static constexpr int PIN_BAT_ADC = 6;
-static constexpr float DIVIDER = 2.0f;
+#include "board.h"
+
+static constexpr float DIVIDER = BAT_DIVIDER;
 
 static float s_v = NAN;            // smoothed volts
 static float s_trend_ref = NAN;    // for "rising" detection
