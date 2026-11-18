@@ -8,15 +8,9 @@
 bool g_led_disabled = false;  // debug: keep the ring dark
 bool g_led_saver_off = false;
 
-#if LED_RING_COUNT == 0
-// Board has no ring: every call is a no-op.
-void led_ring_init() {}
-void led_ring_calibrate() {}
-void led_ring_test_one(int) {}
-void led_ring_off() {}
-void led_ring_snr(float) {}
-#else
-static Adafruit_NeoPixel s_ring(LED_RING_COUNT, PIN_LED_RING, NEO_GRB + NEO_KHZ800);
+// Sized and pinned in led_ring_init() once the board is known. On a board
+// with no ring (LED_RING_COUNT 0) every call is a no-op.
+static Adafruit_NeoPixel s_ring;
 static float s_level = -99;  // smoothed SNR shown
 static uint32_t s_last = 0;
 static bool s_on = false;
@@ -31,6 +25,10 @@ static constexpr float kArcStart = 90;    // meter starts at 6 o'clock...
 static constexpr float kArcSweep = 360;   // ...and fills clockwise all the way round  // of 255: the ring is bright at night
 
 void led_ring_init() {
+  if (!LED_RING_COUNT) return;
+  s_ring.updateType(NEO_GRB + NEO_KHZ800);
+  s_ring.updateLength(LED_RING_COUNT);
+  s_ring.setPin(PIN_LED_RING);
   s_ring.begin();
   s_ring.setBrightness(kBright);
   s_ring.clear();
@@ -42,6 +40,7 @@ static uint32_t s_calib_until = 0;
 // Debug: LED 0 red, LED 1 green, LED 2 blue, LED 3 white for 15 s, so the
 // physical order/orientation of the ring can be read off.
 void led_ring_calibrate() {
+  if (!LED_RING_COUNT) return;
   s_calib_until = millis() + 15000;
   s_ring.clear();
   s_ring.setPixelColor(0, 255, 0, 0);
@@ -53,6 +52,7 @@ void led_ring_calibrate() {
 
 // Debug: only one LED lit (white, full brightness) for 15 s, to find where it is.
 void led_ring_test_one(int idx) {
+  if (!LED_RING_COUNT) return;
   s_calib_until = millis() + 15000;
   s_ring.clear();
   s_ring.setBrightness(255);
@@ -62,6 +62,7 @@ void led_ring_test_one(int idx) {
 }
 
 void led_ring_off() {
+  if (!LED_RING_COUNT) return;
   if ((int32_t)(s_calib_until - millis()) > 0) return;
   if (!s_on) return;
   s_on = false;
@@ -71,7 +72,7 @@ void led_ring_off() {
 }
 
 void led_ring_snr(float snr) {
-  if (g_led_disabled || g_led_saver_off) return;
+  if (!LED_RING_COUNT || g_led_disabled || g_led_saver_off) return;
   if ((int32_t)(s_calib_until - millis()) > 0) return;
   if (isnan(snr)) {
     led_ring_off();
@@ -110,4 +111,3 @@ void led_ring_snr(float snr) {
   }
   s_ring.show();
 }
-#endif  // LED_RING_COUNT

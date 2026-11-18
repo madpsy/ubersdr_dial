@@ -40,21 +40,21 @@ void haptic_init() {
   }
   // Status bits 7:5 = device id (3 = DRV2605, 7 = DRV2605L).
   Serial.printf("[haptic] DRV2605 found, id %d\n", (st >> 5) & 7);
-#if HAPTIC_LRA
-  // LRA actuator (JC3636K518): FEEDBACK_CTRL bit 7 = LRA mode, keeping the
-  // default brake/loop gain and back-EMF gain; library 6 is the LRA library.
-  // (Same as Adafruit_DRV2605::useLRA(); no auto-calibration.)
-  static constexpr uint8_t REG_FEEDBACK = 0x1A;
-  int fb = rd(REG_FEEDBACK);
-  s_present = fb >= 0 && wr(REG_MODE, 0x00)              // out of standby, internal trigger
-              && wr(REG_FEEDBACK, (uint8_t)(fb | 0x80))  // LRA mode
-              && wr(REG_LIB, 0x06)                        // LRA library
-              && wr(REG_SEQ1, 0x00);                      // single-effect sequences
-#else
+  if (HAPTIC_LRA) {
+    // LRA actuator (JC3636K518): FEEDBACK_CTRL bit 7 = LRA mode, keeping the
+    // default brake/loop gain and back-EMF gain; library 6 is the LRA library.
+    // (Same as Adafruit_DRV2605::useLRA(); no auto-calibration.)
+    static constexpr uint8_t REG_FEEDBACK = 0x1A;
+    int fb = rd(REG_FEEDBACK);
+    s_present = fb >= 0 && wr(REG_MODE, 0x00)              // out of standby, internal trigger
+                && wr(REG_FEEDBACK, (uint8_t)(fb | 0x80))  // LRA mode
+                && wr(REG_LIB, 0x06)                        // LRA library
+                && wr(REG_SEQ1, 0x00);                      // single-effect sequences
+    return;
+  }
   s_present = wr(REG_MODE, 0x00)     // out of standby, internal trigger
               && wr(REG_LIB, 0x01)   // ERM library A
               && wr(REG_SEQ1, 0x00); // single-effect sequences
-#endif
 }
 
 bool haptic_present() { return s_present; }

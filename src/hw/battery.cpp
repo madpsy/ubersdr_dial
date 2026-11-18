@@ -5,8 +5,6 @@
 
 #include "board.h"
 
-static constexpr float DIVIDER = BAT_DIVIDER;
-
 static float s_v = NAN;            // smoothed volts
 static float s_trend_ref = NAN;    // for "rising" detection
 static uint32_t s_trend_at = 0, s_last = 0, s_last_log = 0;
@@ -30,7 +28,7 @@ void battery_tick() {
   // 64-sample oversample, calibrated millivolts from the ADC driver.
   uint32_t mv = 0;
   for (int i = 0; i < 64; i++) mv += analogReadMilliVolts(PIN_BAT_ADC);
-  float v = (mv / 64.0f) / 1000.0f * DIVIDER;
+  float v = (mv / 64.0f) / 1000.0f * BAT_DIVIDER;
   s_v = isnan(s_v) ? v : s_v * 0.9f + v * 0.1f;
 
   // Rising over a 20 s window -> charging.

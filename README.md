@@ -4,16 +4,14 @@ ESP32 firmware that turns a Guition 1.8" round knob display into a hand-held
 front end for [UberSDR](https://ubersdr.org). The boards are ESP32-S3 based:
 a round touch display on a rotary knob.
 
-Two boards are supported. They look alike but are wired differently, so
-build for the one you have (see [Hardware](#hardware)):
+Two boards are supported. They look alike but are wired differently; the
+firmware works out which one it's on when it starts, so the same web flasher,
+build and updates serve both (see [Hardware](#hardware)):
 
-| Board | Build environment | Tested with |
-| --- | --- | --- |
-| Guition **JC3636K718** | `jc3636k718` | JC3636K718C-I-Y1(RD) ([AliExpress](https://www.aliexpress.com/item/1005011771382178.html)) |
-| Guition **JC3636K518C**, V2 board (Waveshare ESP32-S3-Knob-Touch-LCD-1.8 layout) | `jc3636k518` | JC3636K518C_I_YR1 |
-
-The web flasher and over-the-air updates publish the **JC3636K718** build
-only. Flash a JC3636K518C from source.
+| Board | Tested with |
+| --- | --- |
+| Guition **JC3636K718** | JC3636K718C-I-Y1(RD) ([AliExpress](https://www.aliexpress.com/item/1005011771382178.html)) |
+| Guition **JC3636K518C**, V2 board (Waveshare ESP32-S3-Knob-Touch-LCD-1.8 layout) | JC3636K518C_I_YR1 |
 
 <p align="center">
   <img src="docs/dial-1.png" alt="UberSDR Dial" width="45%">
@@ -138,7 +136,7 @@ Both boards share:
 - DRV2605 haptic driver
 - Battery
 
-Where they differ (pin maps in `src/hw/board.h`):
+Where they differ (pin maps in `src/hw/board.cpp`):
 
 | | JC3636K718 | JC3636K518C |
 | --- | --- | --- |
@@ -155,7 +153,7 @@ Where they differ (pin maps in `src/hw/board.h`):
 On the JC3636K518C, the display is the right way up with the USB-C socket at
 the bottom.
 
-The `jc3636k518` build is for the **V2** JC3636K518C. On a V1 board the DAC is
+On the JC3636K518C, only the **V2** board is supported. On a V1 board the DAC is
 wired only to the second chip, and GPIO39/40 are a serial link to it, so
 there's no audio from the S3. The haptic driver's enable pin is also on GPIO38
 there. Display, touch, knob and battery use the same pins on both. If audio
@@ -169,9 +167,8 @@ LVGL 9.2, NimBLE, WebSockets, ArduinoJson, ESP8266Audio (Opus) and
 Adafruit NeoPixel.
 
 ```sh
-pio run -e jc3636k718                 # build (JC3636K718)
+pio run -e jc3636k718                 # build (either board)
 pio run -e jc3636k718 -t upload       # build and flash over USB-C
-pio run -e jc3636k518 -t upload       # the same for a JC3636K518C
 ```
 
 On Windows, keep the project in a short path (for example `C:\dev\ubersdr_dial`).
@@ -200,9 +197,11 @@ yourself, but keep echo off. On Linux:
 stty -F /dev/ttyACM0 -hupcl raw -echo 115200 && cat /dev/ttyACM0
 ```
 
-Use `jc3636k718` or `jc3636k518` to match your board. `jc3636k718-idf`, which
-builds Arduino as an ESP-IDF component, is an experiment and isn't
-recommended.
+`jc3636k718` is the environment to use, whichever board you have. At boot the
+firmware looks for the touch and haptic chips on each board's I2C pins and
+uses the pin map of the one that answers (logged as `[board] ...`).
+`jc3636k718-idf`, which builds Arduino as an ESP-IDF component, is an
+experiment and isn't recommended.
 
 If you set up Wi-Fi from an iPhone and `http://192.168.4.1/` won't load, try
 turning off mobile data first, or use another device. An iPad worked where an

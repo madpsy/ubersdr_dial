@@ -76,6 +76,7 @@ void setup() {
   // mid-connect (seen on HB9RYZ-1). Core 1 (UI) stays watched.
   disableCore0WDT();
   Serial.printf("[boot] UberSDR Dial v%s\n", DIAL_VERSION);
+  board_detect();  // which board: picks the pin map everything below uses
   sleep_boot();  // release pins held through deep sleep; note what woke us
   ota_boot();    // fresh update on trial? rolled back?
   settings_load();

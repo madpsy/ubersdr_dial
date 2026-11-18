@@ -8,6 +8,7 @@
 #include <esp_ota_ops.h>
 #include <mbedtls/sha256.h>
 
+#include "../hw/board.h"
 #include "ota_certs.h"
 #include "settings.h"
 #include "wifi_setup.h"
@@ -27,6 +28,7 @@ static const char *kBase = "https://madpsy.github.io/ubersdr_dial/flash/";
 static volatile OtaState s_state = OtaState::Idle;
 static String s_error, s_latest, s_sha;
 static uint32_t s_size = 0;
+static bool s_for_us = true;  // ota.json lists this board (or lists none)
 static volatile float s_progress = 0;
 static bool s_join_wifi = false;
 static bool s_trial = false;     // running on trial after an update (bootloader may roll back)
@@ -266,6 +268,15 @@ static bool fetch_info(String *err) {
       *err = "bad ota.json";
       return false;
     }
+  // "boards": the boards this release runs on. Without it (releases before
+  // there were two boards), it's for every board.
+  s_for_us = true;
+  JsonArrayConst boards = doc["boards"];
+  if (!boards.isNull()) {
+    s_for_us = false;
+    for (JsonVariantConst b : boards)
+      if (b == BOARD_NAME) s_for_us = true;
+  }
   s_latest = ver;
   s_sha = sha;
   s_size = size;
@@ -282,9 +293,12 @@ static void check_task(void *) {
   if (err.isEmpty()) {
     uint32_t t0 = millis();
     if (fetch_info(&err)) {
-      result = is_newer(s_latest) ? OtaState::Available : OtaState::UpToDate;
+      result = s_for_us && is_newer(s_latest) ? OtaState::Available : OtaState::UpToDate;
       Serial.printf("[ota] latest v%s (%u bytes), running v%s: %s, in %lu ms\n", s_latest.c_str(), (unsigned)s_size,
-                    DIAL_VERSION, result == OtaState::Available ? "update available" : "up to date",
+                    DIAL_VERSION,
+                    result == OtaState::Available ? "update available"
+                    : s_for_us                    ? "up to date"
+                                                  : "not built for this board",
                     (unsigned long)(millis() - t0));
     }
   }

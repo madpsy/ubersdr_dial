@@ -45,7 +45,9 @@ step "Writing ota.json (what dials update from)..."
 # The dial installs firmware.bin only if its size and SHA-256 match these.
 SIZE=$(stat -c %s docs/flash/firmware.bin)
 SHA=$(sha256sum docs/flash/firmware.bin | cut -d' ' -f1)
-printf '{\n  "version": "%s",\n  "size": %s,\n  "sha256": "%s"\n}\n' "$VER" "$SIZE" "$SHA" > docs/flash/ota.json
+# "boards": the boards this build runs on (BOARD_NAME in src/hw/board.cpp).
+# A dial whose board isn't listed won't install it.
+printf '{\n  "version": "%s",\n  "size": %s,\n  "sha256": "%s",\n  "boards": ["JC3636K718", "JC3636K518"]\n}\n' "$VER" "$SIZE" "$SHA" > docs/flash/ota.json
 python3 -c "import json,sys; d=json.load(open('docs/flash/ota.json')); sys.exit(d['version']!='$VER' or d['size']!=$SIZE)" \
   || fail "ota.json doesn't check out"
 ok "ota.json: v$VER, $SIZE bytes, sha256 $SHA"

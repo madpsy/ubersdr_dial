@@ -25,18 +25,24 @@ static uint32_t s_anim_at = 0;  // 0 = not animating
 static constexpr uint32_t kAnimMs = 3400;
 
 // Pins held at a level through sleep: backlight off, DAC muted, touch out of reset.
-static const gpio_num_t kHeld[] = {(gpio_num_t)PIN_LCD_BL,
-#if PIN_DAC_MUTE >= 0
-                                   (gpio_num_t)PIN_DAC_MUTE,
-#endif
-                                   (gpio_num_t)PIN_TP_RST};
+// Built per board in sleep_boot(); a board without a DAC mute pin holds two.
+static gpio_num_t s_hold[3];
+static int s_nhold = 0;
 // Wake: either knob pin (each detent pulses one LOW) or the touch interrupt.
-static const gpio_num_t kWake[] = {(gpio_num_t)PIN_KNOB_CW, (gpio_num_t)PIN_KNOB_CCW, (gpio_num_t)PIN_TP_INT};
+static gpio_num_t s_wake[3];
 
 void sleep_boot() {
-  for (gpio_num_t p : kHeld) gpio_hold_dis(p);
+  s_nhold = 0;
+  s_hold[s_nhold++] = (gpio_num_t)PIN_LCD_BL;
+  if (PIN_DAC_MUTE >= 0) s_hold[s_nhold++] = (gpio_num_t)PIN_DAC_MUTE;
+  s_hold[s_nhold++] = (gpio_num_t)PIN_TP_RST;
+  s_wake[0] = (gpio_num_t)PIN_KNOB_CW;
+  s_wake[1] = (gpio_num_t)PIN_KNOB_CCW;
+  s_wake[2] = (gpio_num_t)PIN_TP_INT;
+
+  for (int i = 0; i < s_nhold; i++) gpio_hold_dis(s_hold[i]);
   gpio_deep_sleep_hold_dis();
-  for (gpio_num_t p : kWake) rtc_gpio_deinit(p);
+  for (gpio_num_t p : s_wake) rtc_gpio_deinit(p);
   esp_sleep_wakeup_cause_t why = esp_sleep_get_wakeup_cause();
   if (why == ESP_SLEEP_WAKEUP_EXT1) {
     uint64_t pins = esp_sleep_get_ext1_wakeup_status();
@@ -61,17 +67,15 @@ static void sleep_now() {
   s_resume = s_mode ? s_mode() : -1;
   Serial.printf("[sleep] going to sleep (resume mode %d)\n", s_resume);
   led_ring_off();
-#if PIN_DAC_MUTE >= 0
-  digitalWrite(PIN_DAC_MUTE, LOW);
-#endif
+  if (PIN_DAC_MUTE >= 0) digitalWrite(PIN_DAC_MUTE, LOW);
   display_sleep();  // panel off, backlight pin LOW
   touch_sleep();    // touch chip to its low-power scan
   delay(20);        // let the LED ring's last frame and the panel commands land
 
-  for (gpio_num_t p : kHeld) gpio_hold_en(p);
+  for (int i = 0; i < s_nhold; i++) gpio_hold_en(s_hold[i]);
   gpio_deep_sleep_hold_en();
   uint64_t mask = 0;
-  for (gpio_num_t p : kWake) {
+  for (gpio_num_t p : s_wake) {
     if (p == (gpio_num_t)PIN_TP_INT && !s_touch_wake) continue;
     Serial.printf("[sleep] wake pin %d reads %d\n", (int)p, digitalRead(p));
     rtc_gpio_init(p);
