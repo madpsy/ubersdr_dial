@@ -208,7 +208,7 @@
 
       <div class="card flash">
         <div class="name">UberSDR Dial</div>
-        <div class="desc">Guition JC3636K518C, also sold as JC3636K718 (ESP32-S3) · firmware + your Wi-Fi settings</div>
+        <div class="desc">Guition JC3636K718 or JC3636K518C (ESP32-S3) · firmware + your Wi-Fi settings</div>
         <esp-web-install-button manifest="manifest.json">
           <span slot="unsupported">
             <div class="unsupported">
@@ -239,6 +239,13 @@
         using the port too, such as a serial monitor. The dial uses the ESP32-S3's built-in
         USB, so it needs no driver, and the flasher normally resets it into download mode
         by itself.
+      </div>
+
+      <div class="warn">
+        ⚠️ <strong>"Your ESP32 board is not supported"?</strong> On a <strong>JC3636K518C</strong>,
+        which way up the USB-C plug goes matters: one way reaches the ESP32-S3, the other
+        the board's second chip (a plain ESP32), which this page can't flash. Unplug, turn
+        the plug over, plug it back in and click <strong>Connect</strong> again.
       </div>
 
       <div class="warn">
