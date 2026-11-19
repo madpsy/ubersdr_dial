@@ -16,6 +16,7 @@ static const Board kK718 = {
     .led_ring = 0, .led_count = 13,
     .bat_adc = 6, .bat_divider = 2.0f,
     .haptic_lra = false,
+    .rotate180 = false,
 };
 
 // Guition JC3636K518C, V2 board (Waveshare ESP32-S3-Knob-Touch-LCD-1.8 layout).
@@ -39,6 +40,7 @@ static const Board kK518 = {
     .led_ring = -1, .led_count = 0,  // no LED ring
     .bat_adc = 1, .bat_divider = 2.0f,  // ADC1_CH0
     .haptic_lra = true,
+    .rotate180 = true,  // held with the USB-C socket at the top
 };
 
 const Board *g_board = &kK718;

@@ -405,6 +405,13 @@ void display_sleep() {
   lcd_cmd(0x10, nullptr, 0);  // sleep in
 }
 
+// MADCTL: MY|MX turns the picture 180 degrees on boards that mount the panel
+// that way up (the K518C); 0 is the panel's default.
+static void set_orientation() {
+  uint8_t madctl = LCD_ROTATE_180 ? 0xC0 : 0x00;
+  lcd_cmd(0x36, &madctl, 1);
+}
+
 void display_init() {
   ledcSetup(0, 20000, 8);
   ledcAttachPin(PIN_LCD_BL, 0);
@@ -448,6 +455,7 @@ void display_init() {
   uint8_t colmod = 0x55;  // RGB565
   lcd_cmd(0x3A, &colmod, 1);
   lcd_cmd(0x21, nullptr, 0);  // inversion on (panel is wired inverted)
+  set_orientation();
   lcd_cmd(0x11, nullptr, 0);  // sleep out
   delay(120);
   lcd_cmd(0x29, nullptr, 0);  // display on
@@ -523,6 +531,7 @@ void display_debug_reinit() {
   uint8_t colmod = 0x55;
   lcd_cmd(0x3A, &colmod, 1);
   lcd_cmd(0x21, nullptr, 0);
+  set_orientation();
   lcd_cmd(0x29, nullptr, 0);  // display on
   display_mark_dirty(0, 0, LCD_W - 1, LCD_H - 1);
   if (s_disp) lv_obj_invalidate(lv_screen_active());

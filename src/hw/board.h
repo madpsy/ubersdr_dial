@@ -28,6 +28,9 @@ struct Board {
   int8_t bat_adc;
   float bat_divider;
   bool haptic_lra;  // DRV2605 drives an LRA (else an ERM)
+  // Panel and touch mounted upside down relative to how the dial is held: the
+  // picture and touch are turned 180 degrees.
+  bool rotate180;
 };
 
 extern const Board *g_board;
@@ -60,3 +63,4 @@ void board_detect();
 #define PIN_BAT_ADC (g_board->bat_adc)
 #define BAT_DIVIDER (g_board->bat_divider)
 #define HAPTIC_LRA (g_board->haptic_lra)
+#define LCD_ROTATE_180 (g_board->rotate180)

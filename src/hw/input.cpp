@@ -71,6 +71,10 @@ static bool cst816_read(int16_t *x, int16_t *y) {
   if ((d[0] & 0x0F) == 0) return false;
   *x = ((d[1] & 0x0F) << 8) | d[2];
   *y = ((d[3] & 0x0F) << 8) | d[4];
+  if (LCD_ROTATE_180) {  // match the panel (display.cpp set_orientation)
+    *x = LCD_W - 1 - *x;
+    *y = LCD_H - 1 - *y;
+  }
   return true;
 }
 

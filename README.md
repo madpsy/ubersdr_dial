@@ -151,7 +151,7 @@ Where they differ (pin maps in `src/hw/board.cpp`):
 | Battery ADC | GPIO6 | GPIO1 |
 
 On the JC3636K518C, the display is the right way up with the USB-C socket at
-the bottom.
+the top (the firmware turns the picture and touch 180° on that board).
 
 On the JC3636K518C, only the **V2** board is supported. On a V1 board the DAC is
 wired only to the second chip, and GPIO39/40 are a serial link to it, so
