@@ -42,6 +42,11 @@ is needed if the firmware on the dial has crashed or never finished flashing:
 
 The screen stays dark. Flash it, then switch it off and on again.
 
+On a **JC3636K518C**, which way up the USB-C plug goes matters: one way
+reaches the ESP32-S3, the other the board's second chip (a plain ESP32). If
+the flasher says *ESP32 board not supported*, unplug, turn the plug over and
+connect again.
+
 How it works: the settings go into a dedicated `usercfg` flash partition. The
 firmware imports them on first boot, then erases that partition.
 
@@ -113,7 +118,8 @@ Both modes share the same screen:
 - **Volume button:** tap to mute.
 - **Padlock:** locks tuning.
 - **Header:** in Receiver mode, tap it to pick another receiver.
-- **LED ring and haptics:** give feedback while you turn and tap.
+- **LED ring and haptics:** give feedback while you turn and tap (the
+  JC3636K518C has no LED ring).
 
 Settings are kept across power cycles: Wi-Fi, the chosen receiver, the last
 frequency, mode and view, and the menu options.
