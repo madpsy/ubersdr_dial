@@ -5,11 +5,13 @@
 // nothing would be cut off (see the `ok` callback), the dial plays a short
 // "going to sleep" animation and powers down to microamps. A knob turn (or a
 // touch) wakes it; waking is a restart, which goes straight back into the mode
-// it was in. A turn or touch during the animation cancels it.
+// it was in. A turn or touch during the animation cancels it. Where nothing
+// has been chosen yet (the start-up choice), it goes sooner: `quick` says so.
 void sleep_boot();                     // first thing in setup(): release pins held through sleep
 int sleep_woke_mode();                 // mode to resume after waking (0/1/2), or -1 for the start-up choice
 void sleep_set_ok(bool (*ok)());       // may we sleep now? (e.g. no page connected)
 void sleep_set_resume(int (*mode)());  // mode to come back to (-1 = start-up choice)
+void sleep_set_quick(bool (*quick)()); // sleep after kQuickMs instead (if sooner than sleep_mins)
 void sleep_tick();                     // call every loop, after saver_tick()
 void sleep_start();                    // debug / "now": run the animation, then sleep
 bool sleep_pending();                  // animation running

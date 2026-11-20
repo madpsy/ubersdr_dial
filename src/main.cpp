@@ -108,6 +108,8 @@ void setup() {
       default: return true;                                    // start-up choice, setup, picker
     }
   });
+  // Nothing chosen yet: no need to wait the full sleep time.
+  sleep_set_quick([]() -> bool { return ui_current() == Screen::ModeSelect; });
   sleep_set_resume([]() -> int {
     Screen s = ui_current();
     return s == Screen::Controller || s == Screen::Radio ? g_settings.start_mode : -1;

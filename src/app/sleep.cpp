@@ -21,6 +21,8 @@ static String s_wake_note = "cold boot";
 static bool s_touch_wake = true;  // debug: knob-only wake to compare
 static bool (*s_ok)() = nullptr;
 static int (*s_mode)() = nullptr;
+static bool (*s_quick)() = nullptr;
+static constexpr uint32_t kQuickMs = 2 * 60000UL;  // idle on the start-up choice
 static uint32_t s_anim_at = 0;  // 0 = not animating
 static constexpr uint32_t kAnimMs = 3400;
 
@@ -60,6 +62,7 @@ int sleep_woke_mode() { return s_woke_mode; }
 const char *sleep_wake_note() { return s_wake_note.c_str(); }
 void sleep_debug_touch_wake(bool on) { s_touch_wake = on; }
 void sleep_set_ok(bool (*ok)()) { s_ok = ok; }
+void sleep_set_quick(bool (*quick)()) { s_quick = quick; }
 void sleep_set_resume(int (*mode)()) { s_mode = mode; }
 bool sleep_pending() { return s_anim_at != 0; }
 
@@ -114,7 +117,9 @@ void sleep_tick() {
     return;
   }
   if (!g_settings.sleep_mins) return;
-  if (saver_idle_ms() < (uint32_t)g_settings.sleep_mins * 60000UL) return;
+  uint32_t after = (uint32_t)g_settings.sleep_mins * 60000UL;
+  if (s_quick && s_quick() && after > kQuickMs) after = kQuickMs;
+  if (saver_idle_ms() < after) return;
   if (s_ok && !s_ok()) return;
   sleep_start();
 }
